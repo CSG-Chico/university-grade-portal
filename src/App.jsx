@@ -140,6 +140,7 @@ export default function App() {
   };
 
   // 1B. STUDENT SELF-REGISTRATION: REGISTER GMAIL & RECEIVE PIN
+  // 1B. STUDENT SELF-REGISTRATION: STRICT ONE-TIME GMAIL REGISTRATION
   const handleStudentRegisterGmail = async (e) => {
     e.preventDefault();
     setStudentError('');
@@ -148,8 +149,8 @@ export default function App() {
     const cleanId = regStudentId.trim();
     const cleanEmail = regGmail.trim().toLowerCase();
 
-    if (!cleanEmail.endsWith('@gmail.com') && !cleanEmail.includes('@')) {
-      setStudentError('Please enter a valid personal Gmail address (e.g., yourname@gmail.com).');
+    if (!cleanEmail.endsWith('@gmail.com')) {
+      setStudentError('Please enter a valid personal @gmail.com address.');
       return;
     }
 
@@ -175,30 +176,48 @@ export default function App() {
     const studentRecord = data[0];
     const existingEmail = (studentRecord.email || '').trim().toLowerCase();
 
-    if (existingEmail && existingEmail !== cleanEmail) {
-      const [userPart, domainPart] = existingEmail.split('@');
-      const masked = `${userPart.slice(0, 2)}***@${domainPart}`;
-      setSendingStudentPin(false);
-      setStudentError(
-        `This Student ID already has a registered Gmail (${masked}). Enter that exact Gmail to resend your PIN, or ask your instructor to reset your email.`
-      );
+    // STRICT LOCK: If an email is already registered, NEVER update the database.
+    if (existingEmail) {
+      if (existingEmail !== cleanEmail) {
+        const [userPart, domainPart] = existingEmail.split('@');
+        const masked = `${userPart.slice(0, 2)}***@${domainPart}`;
+        setSendingStudentPin(false);
+        setStudentError(
+          `Locked: This Student ID is already permanently linked to ${masked}. Students cannot change their registered Gmail. Please contact your instructor if you need it reset.`
+        );
+        return;
+      }
+
+      // If they entered their exact same registered Gmail, just resend their PIN without touching the DB
+      try {
+        await sendPinEmail(studentRecord, existingEmail);
+        setStudentSuccess(
+          `Your PIN has been re-sent to your registered Gmail (${existingEmail}).`
+        );
+        setStudentIdInput(cleanId);
+        setStudentTab('login');
+      } catch (err) {
+        setStudentError(err.message);
+      } finally {
+        setSendingStudentPin(false);
+      }
       return;
     }
 
+    // First-time registration ONLY (when existingEmail is empty)
     try {
-      if (!existingEmail) {
-        const { error: updateErr } = await supabase
-          .from('student_grades')
-          .update({ email: cleanEmail, updated_at: new Date().toISOString() })
-          .eq('student_id', cleanId);
+      const { error: updateErr } = await supabase
+        .from('student_grades')
+        .update({ email: cleanEmail, updated_at: new Date().toISOString() })
+        .eq('student_id', cleanId)
+        .or('email.is.null,email.eq.'); // Extra safeguard: only updates rows where email is blank
 
-        if (updateErr) throw new Error('Could not save your Gmail: ' + updateErr.message);
-      }
+      if (updateErr) throw new Error(updateErr.message);
 
       await sendPinEmail(studentRecord, cleanEmail);
 
       setStudentSuccess(
-        `Success! Your secret PIN has been emailed to ${cleanEmail}. Check your Inbox (or Spam folder) and log in!`
+        `Success! ${cleanEmail} is now permanently linked to your Student ID, and your PIN has been sent.`
       );
       setStudentIdInput(cleanId);
       setStudentTab('login');
