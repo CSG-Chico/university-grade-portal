@@ -3,13 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 import { 
   GraduationCap, ShieldCheck, Upload, Download, Search, 
   LogOut, Eye, EyeOff, Trash2, CheckCircle2, AlertCircle, 
-  Lock, Pencil, Check, X, Mail, Send, UserCheck, KeyRound, ArrowLeft
+  Lock, Pencil, Check, X, Mail, Send, UserCheck, KeyRound, 
+  ArrowLeft, UserPlus, Users, BookOpen, Clock, ShieldAlert
 } from 'lucide-react';
 
 // Initialize Supabase Client from your .env file
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const TEACHER_PASSWORD = import.meta.env.VITE_TEACHER_PASSWORD || 'admin123';
 
 // EmailJS Credentials from .env
 const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
@@ -18,7 +18,6 @@ const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// Helper to check if current URL is the Teacher Portal (/teacher or #/teacher)
 const checkIsTeacherRoute = () => {
   const path = window.location.pathname.toLowerCase();
   const hash = window.location.hash.toLowerCase();
@@ -28,7 +27,6 @@ const checkIsTeacherRoute = () => {
 export default function App() {
   const [isTeacherRoute, setIsTeacherRoute] = useState(checkIsTeacherRoute());
 
-  // Listen for URL changes (e.g., hash changes or back/forward navigation)
   useEffect(() => {
     const handleRouteChange = () => setIsTeacherRoute(checkIsTeacherRoute());
     window.addEventListener('popstate', handleRouteChange);
@@ -39,7 +37,7 @@ export default function App() {
     };
   }, []);
 
-  // Student Portal State
+  // ================= STUDENT PORTAL STATE =================
   const [studentTab, setStudentTab] = useState('login'); // 'login' | 'register'
   const [studentIdInput, setStudentIdInput] = useState('');
   const [pinInput, setPinInput] = useState('');
@@ -49,15 +47,31 @@ export default function App() {
   const [studentSuccess, setStudentSuccess] = useState('');
   const [loadingStudent, setLoadingStudent] = useState(false);
 
-  // Student Self-Registration (Claim PIN via Gmail) State
   const [regStudentId, setRegStudentId] = useState('');
   const [regGmail, setRegGmail] = useState('');
   const [sendingStudentPin, setSendingStudentPin] = useState(false);
 
-  // Teacher Admin State
-  const [isTeacherAuth, setIsTeacherAuth] = useState(false);
-  const [teacherPassInput, setTeacherPassInput] = useState('');
+  // ================= INSTRUCTOR & SUPER ADMIN STATE =================
+  const [teacherAuthTab, setTeacherAuthTab] = useState('login'); // 'login' | 'signup'
+  const [currentInstructor, setCurrentInstructor] = useState(null); // Logged-in instructor object
+  const [teacherViewTab, setTeacherViewTab] = useState('grades'); // 'grades' | 'faculty' (admin only)
+
+  // Login Form
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [teacherAuthError, setTeacherAuthError] = useState('');
+  const [teacherAuthSuccess, setTeacherAuthSuccess] = useState('');
+  const [loadingAuth, setLoadingAuth] = useState(false);
+
+  // Instructor Signup Form
+  const [signupName, setSignupName] = useState('');
+  const [signupDept, setSignupDept] = useState('CCIT');
+  const [signupEmail, setSignupEmail] = useState('');
+  const [signupPassword, setSignupPassword] = useState('');
+
+  // Grades & Faculty List State
   const [allRecords, setAllRecords] = useState([]);
+  const [facultyList, setFacultyList] = useState([]);
   const [loadingTeacher, setLoadingTeacher] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
   const [filterSubject, setFilterSubject] = useState('ALL');
@@ -65,7 +79,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sendingEmailId, setSendingEmailId] = useState(null);
 
-  // Inline Editing State for Teacher
+  // Inline Editing State for Instructor
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({
     email: '',
@@ -99,7 +113,7 @@ export default function App() {
           student_name: record.full_name,
           student_id: record.student_id,
           pin: record.pin,
-          subject: record.subject,
+          subject: `${record.subject} (${record.instructor_name || 'Instructor'})`,
           section: record.section,
         },
       }),
@@ -111,7 +125,7 @@ export default function App() {
     }
   };
 
-  // 1A. STUDENT LOGIN (With Student ID + PIN)
+  // ================= 1. STUDENT PORTAL FUNCTIONS =================
   const handleStudentLogin = async (e) => {
     e.preventDefault();
     setStudentError('');
@@ -139,8 +153,6 @@ export default function App() {
     setStudentRecords(data);
   };
 
-  // 1B. STUDENT SELF-REGISTRATION: REGISTER GMAIL & RECEIVE PIN
-  // 1B. STUDENT SELF-REGISTRATION: STRICT ONE-TIME GMAIL REGISTRATION
   const handleStudentRegisterGmail = async (e) => {
     e.preventDefault();
     setStudentError('');
@@ -176,7 +188,6 @@ export default function App() {
     const studentRecord = data[0];
     const existingEmail = (studentRecord.email || '').trim().toLowerCase();
 
-    // STRICT LOCK: If an email is already registered, NEVER update the database.
     if (existingEmail) {
       if (existingEmail !== cleanEmail) {
         const [userPart, domainPart] = existingEmail.split('@');
@@ -188,12 +199,9 @@ export default function App() {
         return;
       }
 
-      // If they entered their exact same registered Gmail, just resend their PIN without touching the DB
       try {
         await sendPinEmail(studentRecord, existingEmail);
-        setStudentSuccess(
-          `Your PIN has been re-sent to your registered Gmail (${existingEmail}).`
-        );
+        setStudentSuccess(`Your PIN has been re-sent to your registered Gmail (${existingEmail}).`);
         setStudentIdInput(cleanId);
         setStudentTab('login');
       } catch (err) {
@@ -204,13 +212,12 @@ export default function App() {
       return;
     }
 
-    // First-time registration ONLY (when existingEmail is empty)
     try {
       const { error: updateErr } = await supabase
         .from('student_grades')
         .update({ email: cleanEmail, updated_at: new Date().toISOString() })
         .eq('student_id', cleanId)
-        .or('email.is.null,email.eq.'); // Extra safeguard: only updates rows where email is blank
+        .or('email.is.null,email.eq.');
 
       if (updateErr) throw new Error(updateErr.message);
 
@@ -228,22 +235,98 @@ export default function App() {
     }
   };
 
-  // 2. TEACHER LOGIN & FETCH ALL RECORDS
-  const handleTeacherLogin = (e) => {
+  // ================= 2. INSTRUCTOR & SUPER ADMIN AUTH =================
+  const handleInstructorLogin = async (e) => {
     e.preventDefault();
-    if (teacherPassInput === TEACHER_PASSWORD) {
-      setIsTeacherAuth(true);
-      fetchAllRecords();
-    } else {
-      alert('Incorrect Teacher Passcode');
+    setTeacherAuthError('');
+    setTeacherAuthSuccess('');
+    setLoadingAuth(true);
+
+    const { data, error } = await supabase
+      .from('instructors')
+      .select('*')
+      .eq('email', loginEmail.trim().toLowerCase())
+      .eq('password', loginPassword.trim())
+      .maybeSingle();
+
+    setLoadingAuth(false);
+
+    if (error) {
+      setTeacherAuthError('Database error: ' + error.message);
+      return;
+    }
+
+    if (!data) {
+      setTeacherAuthError('Invalid email or password.');
+      return;
+    }
+
+    if (data.status === 'pending') {
+      setTeacherAuthError('Your instructor account is still PENDING approval by the Super Admin.');
+      return;
+    }
+
+    if (data.status === 'rejected') {
+      setTeacherAuthError('Your instructor account request was declined by the administrator.');
+      return;
+    }
+
+    setCurrentInstructor(data);
+    fetchInstructorRecords(data);
+    if (data.role === 'admin') {
+      fetchFacultyList();
     }
   };
 
-  const fetchAllRecords = async () => {
+  const handleInstructorSignup = async (e) => {
+    e.preventDefault();
+    setTeacherAuthError('');
+    setTeacherAuthSuccess('');
+    setLoadingAuth(true);
+
+    const cleanEmail = signupEmail.trim().toLowerCase();
+    const cleanName = signupName.trim().toUpperCase();
+
+    const { error } = await supabase.from('instructors').insert([
+      {
+        full_name: cleanName,
+        department: signupDept.trim() || 'CCIT',
+        email: cleanEmail,
+        password: signupPassword.trim(),
+        role: 'instructor',
+        status: 'pending',
+      },
+    ]);
+
+    setLoadingAuth(false);
+
+    if (error) {
+      if (error.message.includes('unique') || error.message.includes('duplicate')) {
+        setTeacherAuthError('An instructor account with this email already exists.');
+      } else {
+        setTeacherAuthError('Error creating request: ' + error.message);
+      }
+      return;
+    }
+
+    setTeacherAuthSuccess(
+      'Account request submitted! Please wait for the Super Admin to approve your account before logging in.'
+    );
+    setSignupName('');
+    setSignupEmail('');
+    setSignupPassword('');
+    setTeacherAuthTab('login');
+  };
+
+  // Fetch only the logged-in instructor's student records
+  const fetchInstructorRecords = async (instructor = currentInstructor) => {
+    if (!instructor) return;
     setLoadingTeacher(true);
+
     const { data, error } = await supabase
       .from('student_grades')
       .select('*')
+      .eq('instructor_id', instructor.id)
       .order('subject', { ascending: true })
       .order('section', { ascending: true })
       .order('full_name', { ascending: true });
@@ -252,6 +335,42 @@ export default function App() {
       setAllRecords(data);
     }
     setLoadingTeacher(false);
+  };
+
+  // Super Admin: Fetch all instructors for approval management
+  const fetchFacultyList = async () => {
+    const { data, error } = await supabase
+      .from('instructors')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      setFacultyList(data);
+    }
+  };
+
+  // Super Admin: Approve or Reject an Instructor
+  const handleUpdateFacultyStatus = async (facultyId, newStatus) => {
+    const { error } = await supabase
+      .from('instructors')
+      .update({ status: newStatus })
+      .eq('id', facultyId);
+
+    if (error) {
+      alert('Failed to update status: ' + error.message);
+    } else {
+      fetchFacultyList();
+    }
+  };
+
+  const handleDeleteFaculty = async (faculty) => {
+    if (faculty.role === 'admin') {
+      alert('Cannot delete the Super Admin account.');
+      return;
+    }
+    if (!window.confirm(`Delete instructor ${faculty.full_name} and all their uploaded class records?`)) return;
+    await supabase.from('instructors').delete().eq('id', faculty.id);
+    fetchFacultyList();
   };
 
   // 3. DOWNLOAD CSV TEMPLATE
@@ -270,10 +389,10 @@ export default function App() {
     a.click();
   };
 
-  // 4. BULK CSV UPLOAD TO SUPABASE
+  // 4. BULK CSV UPLOAD TO SUPABASE (Automatically attaches currentInstructor.id & full_name)
   const handleCsvUpload = async (e) => {
     const file = e.target.files[0];
-    if (!file) return;
+    if (!file || !currentInstructor) return;
 
     const reader = new FileReader();
     reader.onload = async (event) => {
@@ -292,8 +411,14 @@ export default function App() {
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(',').map((c) => c.trim());
         if (cols.length >= 6) {
+          const baseRow = {
+            instructor_id: currentInstructor.id,
+            instructor_name: currentInstructor.full_name,
+          };
+
           if (hasEmailCol && hasFinalCol) {
             rowsToUpsert.push({
+              ...baseRow,
               student_id: cols[0],
               full_name: cols[1],
               email: cols[2] || '',
@@ -307,6 +432,7 @@ export default function App() {
             });
           } else if (!hasEmailCol && hasFinalCol) {
             rowsToUpsert.push({
+              ...baseRow,
               student_id: cols[0],
               full_name: cols[1],
               pin: cols[2],
@@ -319,6 +445,7 @@ export default function App() {
             });
           } else {
             rowsToUpsert.push({
+              ...baseRow,
               student_id: cols[0],
               full_name: cols[1],
               pin: cols[2],
@@ -333,17 +460,17 @@ export default function App() {
         }
       }
 
-      setUploadStatus(`Uploading ${rowsToUpsert.length} records to Supabase...`);
+      setUploadStatus(`Uploading ${rowsToUpsert.length} records under ${currentInstructor.full_name}...`);
 
       const { error } = await supabase
         .from('student_grades')
-        .upsert(rowsToUpsert, { onConflict: 'student_id,subject,section' });
+        .upsert(rowsToUpsert, { onConflict: 'student_id,subject,section,instructor_id' });
 
       if (error) {
         setUploadStatus('Upload Error: ' + error.message);
       } else {
         setUploadStatus(`Successfully uploaded/updated ${rowsToUpsert.length} records!`);
-        fetchAllRecords();
+        fetchInstructorRecords();
       }
     };
     reader.readAsText(file);
@@ -388,7 +515,8 @@ export default function App() {
     const { error } = await supabase
       .from('student_grades')
       .update(updatedFields)
-      .eq('id', id);
+      .eq('id', id)
+      .eq('instructor_id', currentInstructor.id);
 
     setSavingEdit(false);
 
@@ -419,8 +547,12 @@ export default function App() {
   // 8. DELETE RECORD
   const handleDeleteRecord = async (id) => {
     if (!window.confirm('Delete this student grade record?')) return;
-    await supabase.from('student_grades').delete().eq('id', id);
-    fetchAllRecords();
+    await supabase
+      .from('student_grades')
+      .delete()
+      .eq('id', id)
+      .eq('instructor_id', currentInstructor.id);
+    fetchInstructorRecords();
   };
 
   const subjects = ['ALL', ...new Set(allRecords.map((r) => r.subject))];
@@ -436,8 +568,10 @@ export default function App() {
     return matchSubject && matchSection && matchSearch;
   });
 
+  const pendingFacultyCount = facultyList.filter((f) => f.status === 'pending').length;
+
   // ============================================================================
-  // SEPARATE PAGE 1: TEACHER ADMIN PORTAL (Accessible ONLY at /#/teacher or /teacher)
+  // SEPARATE PAGE 1: TEACHER & SUPER ADMIN PORTAL (/#/teacher)
   // ============================================================================
   if (isTeacherRoute) {
     return (
@@ -447,8 +581,12 @@ export default function App() {
             <div className="flex items-center gap-3">
               <ShieldCheck className="w-8 h-8 text-amber-400" />
               <div>
-                <h1 className="font-bold text-lg leading-tight">Instructor Admin Portal</h1>
-                <p className="text-xs text-slate-400">University Grade Management System</p>
+                <h1 className="font-bold text-lg leading-tight">Faculty & Admin Portal</h1>
+                <p className="text-xs text-slate-400">
+                  {currentInstructor
+                    ? `Logged in: ${currentInstructor.full_name} (${currentInstructor.role.toUpperCase()})`
+                    : 'University Grade Management System'}
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -461,18 +599,19 @@ export default function App() {
                 className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1.5 transition"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Go to Student View
+                Student View
               </a>
-              {isTeacherAuth && (
+              {currentInstructor && (
                 <button
                   onClick={() => {
-                    setIsTeacherAuth(false);
-                    setTeacherPassInput('');
+                    setCurrentInstructor(null);
+                    setLoginPassword('');
+                    setAllRecords([]);
                   }}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600 hover:bg-red-700 text-white flex items-center gap-1.5 transition"
                 >
                   <LogOut className="w-4 h-4" />
-                  Lock Admin
+                  Sign Out
                 </button>
               )}
             </div>
@@ -480,327 +619,584 @@ export default function App() {
         </header>
 
         <main className="max-w-7xl mx-auto px-4 py-8">
-          {!isTeacherAuth ? (
-            <div className="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 p-6 sm:p-8 mt-10">
-              <div className="flex items-center gap-2 text-slate-900 font-bold text-xl mb-2">
-                <ShieldCheck className="w-6 h-6 text-indigo-600" />
-                Teacher Admin Login
-              </div>
-              <p className="text-sm text-slate-500 mb-6">
-                Enter your instructor passcode to upload CSV sheets and manage student grades.
-              </p>
-              <form onSubmit={handleTeacherLogin} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                    Instructor Passcode
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="Enter passcode"
-                    value={teacherPassInput}
-                    onChange={(e) => setTeacherPassInput(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                  />
-                </div>
+          {!currentInstructor ? (
+            // ================= INSTRUCTOR LOGIN / SIGNUP CARD =================
+            <div className="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-8">
+              <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50">
                 <button
-                  type="submit"
-                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-lg transition"
+                  type="button"
+                  onClick={() => {
+                    setTeacherAuthTab('login');
+                    setTeacherAuthError('');
+                  }}
+                  className={`py-3.5 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 border-b-2 transition ${
+                    teacherAuthTab === 'login'
+                      ? 'border-indigo-600 text-slate-900 bg-white'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
                 >
-                  Unlock Teacher Dashboard
+                  <ShieldCheck className="w-4 h-4" />
+                  Instructor Login
                 </button>
-              </form>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Bulk Upload Card */}
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                  <div>
-                    <h2 className="text-lg font-bold text-slate-900">Bulk CSV Upload & Registration</h2>
-                    <p className="text-sm text-slate-500">
-                      Upload your class record CSV. Students will register their own Gmail addresses on the Student Portal to receive their PINs.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      onClick={downloadTemplate}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium"
-                    >
-                      <Download className="w-4 h-4" /> Download CSV Template
-                    </button>
-                    <label className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium cursor-pointer">
-                      <Upload className="w-4 h-4" /> Upload CSV File
-                      <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
-                    </label>
-                  </div>
-                </div>
-                {uploadStatus && (
-                  <div className="mt-4 p-3 rounded-lg bg-indigo-50 text-indigo-900 text-sm font-medium flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-indigo-600" />
-                      {uploadStatus}
-                    </div>
-                    <button
-                      onClick={() => setUploadStatus('')}
-                      className="text-xs text-indigo-500 hover:text-indigo-800"
-                    >
-                      Dismiss
-                    </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTeacherAuthTab('signup');
+                    setTeacherAuthError('');
+                    setTeacherAuthSuccess('');
+                  }}
+                  className={`py-3.5 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 border-b-2 transition ${
+                    teacherAuthTab === 'signup'
+                      ? 'border-indigo-600 text-slate-900 bg-white'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <UserPlus className="w-4 h-4" />
+                  Request Account
+                </button>
+              </div>
+
+              <div className="p-6 sm:p-8">
+                {teacherAuthError && (
+                  <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{teacherAuthError}</span>
                   </div>
                 )}
-              </div>
 
-              {/* Master List & Filters */}
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                <div className="flex flex-col sm:flex-row gap-3 justify-between mb-6">
-                  <div className="relative flex-1">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-                    <input
-                      type="text"
-                      placeholder="Search by Student Name, ID, or Registered Gmail..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-300 text-sm"
-                    />
+                {teacherAuthSuccess && (
+                  <div className="mb-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
+                    <span>{teacherAuthSuccess}</span>
                   </div>
-                  <div className="flex gap-3">
-                    <select
-                      value={filterSubject}
-                      onChange={(e) => setFilterSubject(e.target.value)}
-                      className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
-                    >
-                      {subjects.map((sub) => (
-                        <option key={sub} value={sub}>
-                          {sub === 'ALL' ? 'All Subjects' : sub}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={filterSection}
-                      onChange={(e) => setFilterSection(e.target.value)}
-                      className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
-                    >
-                      {sections.map((sec) => (
-                        <option key={sec} value={sec}>
-                          {sec === 'ALL' ? 'All Sections' : sec}
-                        </option>
-                      ))}
-                    </select>
+                )}
+
+                {teacherAuthTab === 'login' ? (
+                  <>
+                    <h2 className="text-xl font-bold text-slate-900 mb-1">Faculty Sign In</h2>
+                    <p className="text-sm text-slate-500 mb-6">
+                      Log in with your approved instructor email and password.
+                    </p>
+                    <form onSubmit={handleInstructorLogin} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                          Instructor Email
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          placeholder="instructor@unp.edu.ph"
+                          value={loginEmail}
+                          onChange={(e) => setLoginEmail(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                          Password
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          placeholder="Enter password"
+                          value={loginPassword}
+                          onChange={(e) => setLoginPassword(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={loadingAuth}
+                        className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-lg transition"
+                      >
+                        {loadingAuth ? 'Signing In...' : 'Sign In to Dashboard'}
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-xl font-bold text-slate-900 mb-1">Request Instructor Account</h2>
+                    <p className="text-sm text-slate-500 mb-6">
+                      Submit your details below. The Super Admin must approve your account before you can upload grades.
+                    </p>
+                    <form onSubmit={handleInstructorSignup} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                          Full Name (Displayed to Students)
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g., JUAN DELA CRUZ"
+                          value={signupName}
+                          onChange={(e) => setSignupName(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                          College / Department
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g., CCIT"
+                          value={signupDept}
+                          onChange={(e) => setSignupDept(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                          Email Address
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          placeholder="your.email@unp.edu.ph"
+                          value={signupEmail}
+                          onChange={(e) => setSignupEmail(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                          Create Password
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          placeholder="Create a strong password"
+                          value={signupPassword}
+                          onChange={(e) => setSignupPassword(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={loadingAuth}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition"
+                      >
+                        {loadingAuth ? 'Submitting Request...' : 'Submit Account Request'}
+                      </button>
+                    </form>
+                  </>
+                )}
+              </div>
+            </div>
+          ) : (
+            // ================= LOGGED-IN INSTRUCTOR / SUPER ADMIN DASHBOARD =================
+            <div className="space-y-6">
+              {/* Super Admin Navigation Bar (Switch between My Class Grades & Faculty Approvals) */}
+              {currentInstructor.role === 'admin' && (
+                <div className="flex flex-wrap gap-3 border-b border-slate-200 pb-4">
+                  <button
+                    onClick={() => setTeacherViewTab('grades')}
+                    className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition ${
+                      teacherViewTab === 'grades'
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'bg-white text-slate-600 hover:bg-slate-200/60 border border-slate-200'
+                    }`}
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    My Class Records ({allRecords.length})
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTeacherViewTab('faculty');
+                      fetchFacultyList();
+                    }}
+                    className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition ${
+                      teacherViewTab === 'faculty'
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'bg-white text-slate-600 hover:bg-slate-200/60 border border-slate-200'
+                    }`}
+                  >
+                    <Users className="w-4 h-4" />
+                    Faculty Account Approvals
+                    {pendingFacultyCount > 0 && (
+                      <span className="px-2 py-0.5 text-xs rounded-full bg-amber-400 text-slate-950 font-extrabold">
+                        {pendingFacultyCount} Pending
+                      </span>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {teacherViewTab === 'faculty' && currentInstructor.role === 'admin' ? (
+                // ================= SUPER ADMIN: FACULTY APPROVAL TABLE =================
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                  <div className="mb-6">
+                    <h2 className="text-lg font-bold text-slate-900">Instructor Account Requests & Directory</h2>
+                    <p className="text-sm text-slate-500">
+                      Approve or revoke faculty access. Each approved instructor can only view and manage their own uploaded students.
+                    </p>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500 uppercase text-xs">
+                          <th className="py-3 px-3">Instructor Name</th>
+                          <th className="py-3 px-3">Department</th>
+                          <th className="py-3 px-3">Email</th>
+                          <th className="py-3 px-3">Role</th>
+                          <th className="py-3 px-3">Status</th>
+                          <th className="py-3 px-3 text-right">Approval Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {facultyList.map((fac) => (
+                          <tr key={fac.id} className="hover:bg-slate-50">
+                            <td className="py-3 px-3 font-semibold text-slate-900">{fac.full_name}</td>
+                            <td className="py-3 px-3">{fac.department}</td>
+                            <td className="py-3 px-3 font-mono text-xs text-slate-600">{fac.email}</td>
+                            <td className="py-3 px-3 uppercase text-xs font-bold text-indigo-700">{fac.role}</td>
+                            <td className="py-3 px-3">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                                  fac.status === 'approved'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : fac.status === 'pending'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                    : 'bg-red-50 text-red-700 border border-red-200'
+                                }`}
+                              >
+                                {fac.status === 'pending' && <Clock className="w-3 h-3" />}
+                                {fac.status.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap space-x-2">
+                              {fac.role !== 'admin' && (
+                                <>
+                                  {fac.status !== 'approved' && (
+                                    <button
+                                      onClick={() => handleUpdateFacultyStatus(fac.id, 'approved')}
+                                      className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition"
+                                    >
+                                      Approve
+                                    </button>
+                                  )}
+                                  {fac.status !== 'rejected' && (
+                                    <button
+                                      onClick={() => handleUpdateFacultyStatus(fac.id, 'rejected')}
+                                      className="px-3 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-semibold transition"
+                                    >
+                                      Reject / Suspend
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => handleDeleteFaculty(fac)}
+                                    className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition align-middle"
+                                    title="Delete Instructor"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
+              ) : (
+                // ================= INSTRUCTOR'S ISOLATED CLASS RECORDS VIEW =================
+                <>
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      <div>
+                        <h2 className="text-lg font-bold text-slate-900">
+                          Bulk CSV Upload — {currentInstructor.full_name}
+                        </h2>
+                        <p className="text-sm text-slate-500">
+                          Uploaded students are linked exclusively to your instructor account.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          onClick={downloadTemplate}
+                          className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium"
+                        >
+                          <Download className="w-4 h-4" /> Download CSV Template
+                        </button>
+                        <label className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium cursor-pointer">
+                          <Upload className="w-4 h-4" /> Upload CSV File
+                          <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
+                        </label>
+                      </div>
+                    </div>
+                    {uploadStatus && (
+                      <div className="mt-4 p-3 rounded-lg bg-indigo-50 text-indigo-900 text-sm font-medium flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-indigo-600" />
+                          {uploadStatus}
+                        </div>
+                        <button
+                          onClick={() => setUploadStatus('')}
+                          className="text-xs text-indigo-500 hover:text-indigo-800"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
+                  </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-slate-500 uppercase text-xs">
-                        <th className="py-3 px-3">Student ID</th>
-                        <th className="py-3 px-3">Full Name</th>
-                        <th className="py-3 px-3">Registered Gmail</th>
-                        <th className="py-3 px-3">PIN</th>
-                        <th className="py-3 px-3">Section</th>
-                        <th className="py-3 px-3">Midterm</th>
-                        <th className="py-3 px-3">Final</th>
-                        <th className="py-3 px-3">Breakdown</th>
-                        <th className="py-3 px-3">Remarks</th>
-                        <th className="py-3 px-3 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {loadingTeacher ? (
-                        <tr>
-                          <td colSpan="10" className="py-8 text-center text-slate-400">
-                            Loading records from Supabase...
-                          </td>
-                        </tr>
-                      ) : filteredRecords.length === 0 ? (
-                        <tr>
-                          <td colSpan="10" className="py-8 text-center text-slate-400">
-                            No student records found. Upload a CSV file to get started.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredRecords.map((rec) => {
-                          const isEditing = editingId === rec.id;
-                          return (
-                            <tr key={rec.id} className={isEditing ? 'bg-indigo-50/60' : 'hover:bg-slate-50'}>
-                              <td className="py-3 px-3 font-mono text-xs">{rec.student_id}</td>
-                              <td className="py-3 px-3 font-medium text-slate-900">{rec.full_name}</td>
+                  {/* Master List & Filters */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                    <div className="flex flex-col sm:flex-row gap-3 justify-between mb-6">
+                      <div className="relative flex-1">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                        <input
+                          type="text"
+                          placeholder="Search your students by Name, ID, or Gmail..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-300 text-sm"
+                        />
+                      </div>
+                      <div className="flex gap-3">
+                        <select
+                          value={filterSubject}
+                          onChange={(e) => setFilterSubject(e.target.value)}
+                          className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
+                        >
+                          {subjects.map((sub) => (
+                            <option key={sub} value={sub}>
+                              {sub === 'ALL' ? 'All My Subjects' : sub}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={filterSection}
+                          onChange={(e) => setFilterSection(e.target.value)}
+                          className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
+                        >
+                          {sections.map((sec) => (
+                            <option key={sec} value={sec}>
+                              {sec === 'ALL' ? 'All My Sections' : sec}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
 
-                              <td className="py-3 px-3 text-xs text-slate-600">
-                                {isEditing ? (
-                                  <input
-                                    type="email"
-                                    value={editForm.email}
-                                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                                    placeholder="Clear or edit Gmail"
-                                    className="w-44 px-2 py-1 rounded border border-indigo-300 bg-white text-xs"
-                                  />
-                                ) : rec.email ? (
-                                  <span className="text-emerald-700 font-medium">{rec.email}</span>
-                                ) : (
-                                  <span className="text-slate-400 italic">Not registered yet</span>
-                                )}
-                              </td>
-
-                              <td className="py-3 px-3 font-mono text-xs text-slate-500">
-                                {isEditing ? (
-                                  <input
-                                    type="text"
-                                    value={editForm.pin}
-                                    onChange={(e) => setEditForm({ ...editForm, pin: e.target.value })}
-                                    className="w-16 px-2 py-1 rounded border border-indigo-300 bg-white font-mono text-xs"
-                                  />
-                                ) : (
-                                  rec.pin
-                                )}
-                              </td>
-
-                              <td className="py-3 px-3">{rec.section}</td>
-
-                              <td className="py-3 px-3 font-bold text-indigo-700">
-                                {isEditing ? (
-                                  <input
-                                    type="text"
-                                    value={editForm.midterm_grade}
-                                    onChange={(e) => {
-                                      const val = e.target.value;
-                                      setEditForm({
-                                        ...editForm,
-                                        midterm_grade: val,
-                                        remarks: computeRemarksFromGrade(val, editForm.remarks),
-                                      });
-                                    }}
-                                    className="w-16 px-2 py-1 rounded border border-indigo-400 bg-white font-bold text-indigo-900"
-                                  />
-                                ) : (
-                                  rec.midterm_grade
-                                )}
-                              </td>
-
-                              <td className="py-3 px-3 font-bold text-indigo-950">
-                                {isEditing ? (
-                                  <input
-                                    type="text"
-                                    value={editForm.final_grade}
-                                    onChange={(e) => {
-                                      const val = e.target.value;
-                                      setEditForm({
-                                        ...editForm,
-                                        final_grade: val,
-                                        remarks: computeRemarksFromGrade(val, editForm.remarks),
-                                      });
-                                    }}
-                                    placeholder="Pending"
-                                    className="w-20 px-2 py-1 rounded border border-indigo-400 bg-white font-bold text-indigo-950"
-                                  />
-                                ) : (
-                                  <span className={rec.final_grade === 'Pending' || !rec.final_grade ? 'text-slate-400 font-normal text-xs' : 'font-bold text-indigo-950'}>
-                                    {rec.final_grade || 'Pending'}
-                                  </span>
-                                )}
-                              </td>
-
-                              <td className="py-3 px-3 text-xs text-slate-500 max-w-xs">
-                                {isEditing ? (
-                                  <input
-                                    type="text"
-                                    value={editForm.breakdown}
-                                    onChange={(e) => setEditForm({ ...editForm, breakdown: e.target.value })}
-                                    className="w-full min-w-[160px] px-2 py-1 rounded border border-indigo-300 bg-white text-xs text-slate-700"
-                                  />
-                                ) : (
-                                  <span className="line-clamp-1" title={rec.breakdown}>
-                                    {rec.breakdown || '—'}
-                                  </span>
-                                )}
-                              </td>
-
-                              <td className="py-3 px-3">
-                                {isEditing ? (
-                                  <select
-                                    value={editForm.remarks}
-                                    onChange={(e) => setEditForm({ ...editForm, remarks: e.target.value })}
-                                    className="px-2 py-1 rounded border border-indigo-300 bg-white text-xs font-medium"
-                                  >
-                                    <option value="Passed">Passed</option>
-                                    <option value="Conditional">Conditional</option>
-                                    <option value="INC">INC</option>
-                                    <option value="Failed">Failed</option>
-                                  </select>
-                                ) : (
-                                  <span
-                                    className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                      rec.remarks === 'Passed'
-                                        ? 'bg-emerald-50 text-emerald-700'
-                                        : rec.remarks === 'Conditional' || rec.remarks === 'INC'
-                                        ? 'bg-amber-50 text-amber-700'
-                                        : 'bg-red-50 text-red-700'
-                                    }`}
-                                  >
-                                    {rec.remarks}
-                                  </span>
-                                )}
-                              </td>
-
-                              <td className="py-3 px-3 text-right whitespace-nowrap">
-                                {isEditing ? (
-                                  <div className="inline-flex items-center gap-1">
-                                    <button
-                                      onClick={() => handleSaveEdit(rec.id)}
-                                      disabled={savingEdit}
-                                      className="p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
-                                      title="Save Changes"
-                                    >
-                                      <Check className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => setEditingId(null)}
-                                      className="p-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700"
-                                      title="Cancel"
-                                    >
-                                      <X className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <div className="inline-flex items-center gap-1">
-                                    <button
-                                      onClick={() => handleSendSinglePin(rec)}
-                                      disabled={sendingEmailId === rec.id || !rec.email}
-                                      className={`p-1.5 rounded-lg transition ${
-                                        rec.email
-                                          ? 'text-emerald-600 hover:text-emerald-900 hover:bg-emerald-50'
-                                          : 'text-slate-300 cursor-not-allowed'
-                                      }`}
-                                      title={rec.email ? `Resend PIN to ${rec.email}` : 'Student has not registered a Gmail yet'}
-                                    >
-                                      <Mail className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => startEdit(rec)}
-                                      className="text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 p-1.5 rounded-lg transition"
-                                      title="Edit Grades or Reset Student Gmail"
-                                    >
-                                      <Pencil className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteRecord(rec.id)}
-                                      className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded-lg transition"
-                                      title="Delete Record"
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                )}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-slate-500 uppercase text-xs">
+                            <th className="py-3 px-3">Student ID</th>
+                            <th className="py-3 px-3">Full Name</th>
+                            <th className="py-3 px-3">Registered Gmail</th>
+                            <th className="py-3 px-3">PIN</th>
+                            <th className="py-3 px-3">Subject</th>
+                            <th className="py-3 px-3">Section</th>
+                            <th className="py-3 px-3">Midterm</th>
+                            <th className="py-3 px-3">Final</th>
+                            <th className="py-3 px-3">Breakdown</th>
+                            <th className="py-3 px-3">Remarks</th>
+                            <th className="py-3 px-3 text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {loadingTeacher ? (
+                            <tr>
+                              <td colSpan="11" className="py-8 text-center text-slate-400">
+                                Loading your class records...
                               </td>
                             </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                          ) : filteredRecords.length === 0 ? (
+                            <tr>
+                              <td colSpan="11" className="py-8 text-center text-slate-400">
+                                No student records found under your account. Upload a CSV file to get started.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredRecords.map((rec) => {
+                              const isEditing = editingId === rec.id;
+                              return (
+                                <tr key={rec.id} className={isEditing ? 'bg-indigo-50/60' : 'hover:bg-slate-50'}>
+                                  <td className="py-3 px-3 font-mono text-xs">{rec.student_id}</td>
+                                  <td className="py-3 px-3 font-medium text-slate-900">{rec.full_name}</td>
+
+                                  <td className="py-3 px-3 text-xs text-slate-600">
+                                    {isEditing ? (
+                                      <input
+                                        type="email"
+                                        value={editForm.email}
+                                        onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                                        placeholder="Clear to reset Gmail"
+                                        className="w-44 px-2 py-1 rounded border border-indigo-300 bg-white text-xs"
+                                      />
+                                    ) : rec.email ? (
+                                      <span className="text-emerald-700 font-medium">{rec.email}</span>
+                                    ) : (
+                                      <span className="text-slate-400 italic">Not registered yet</span>
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3 font-mono text-xs text-slate-500">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editForm.pin}
+                                        onChange={(e) => setEditForm({ ...editForm, pin: e.target.value })}
+                                        className="w-16 px-2 py-1 rounded border border-indigo-300 bg-white font-mono text-xs"
+                                      />
+                                    ) : (
+                                      rec.pin
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3 text-xs">{rec.subject}</td>
+                                  <td className="py-3 px-3">{rec.section}</td>
+
+                                  <td className="py-3 px-3 font-bold text-indigo-700">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editForm.midterm_grade}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setEditForm({
+                                            ...editForm,
+                                            midterm_grade: val,
+                                            remarks: computeRemarksFromGrade(val, editForm.remarks),
+                                          });
+                                        }}
+                                        className="w-16 px-2 py-1 rounded border border-indigo-400 bg-white font-bold text-indigo-900"
+                                      />
+                                    ) : (
+                                      rec.midterm_grade
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3 font-bold text-indigo-950">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editForm.final_grade}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setEditForm({
+                                            ...editForm,
+                                            final_grade: val,
+                                            remarks: computeRemarksFromGrade(val, editForm.remarks),
+                                          });
+                                        }}
+                                        placeholder="Pending"
+                                        className="w-20 px-2 py-1 rounded border border-indigo-400 bg-white font-bold text-indigo-950"
+                                      />
+                                    ) : (
+                                      <span className={rec.final_grade === 'Pending' || !rec.final_grade ? 'text-slate-400 font-normal text-xs' : 'font-bold text-indigo-950'}>
+                                        {rec.final_grade || 'Pending'}
+                                      </span>
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3 text-xs text-slate-500 max-w-xs">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editForm.breakdown}
+                                        onChange={(e) => setEditForm({ ...editForm, breakdown: e.target.value })}
+                                        className="w-full min-w-[160px] px-2 py-1 rounded border border-indigo-300 bg-white text-xs text-slate-700"
+                                      />
+                                    ) : (
+                                      <span className="line-clamp-1" title={rec.breakdown}>
+                                        {rec.breakdown || '—'}
+                                      </span>
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3">
+                                    {isEditing ? (
+                                      <select
+                                        value={editForm.remarks}
+                                        onChange={(e) => setEditForm({ ...editForm, remarks: e.target.value })}
+                                        className="px-2 py-1 rounded border border-indigo-300 bg-white text-xs font-medium"
+                                      >
+                                        <option value="Passed">Passed</option>
+                                        <option value="Conditional">Conditional</option>
+                                        <option value="INC">INC</option>
+                                        <option value="Failed">Failed</option>
+                                      </select>
+                                    ) : (
+                                      <span
+                                        className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                          rec.remarks === 'Passed'
+                                            ? 'bg-emerald-50 text-emerald-700'
+                                            : rec.remarks === 'Conditional' || rec.remarks === 'INC'
+                                            ? 'bg-amber-50 text-amber-700'
+                                            : 'bg-red-50 text-red-700'
+                                        }`}
+                                      >
+                                        {rec.remarks}
+                                      </span>
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3 text-right whitespace-nowrap">
+                                    {isEditing ? (
+                                      <div className="inline-flex items-center gap-1">
+                                        <button
+                                          onClick={() => handleSaveEdit(rec.id)}
+                                          disabled={savingEdit}
+                                          className="p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
+                                          title="Save Changes"
+                                        >
+                                          <Check className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          onClick={() => setEditingId(null)}
+                                          className="p-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700"
+                                          title="Cancel"
+                                        >
+                                          <X className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="inline-flex items-center gap-1">
+                                        <button
+                                          onClick={() => handleSendSinglePin(rec)}
+                                          disabled={sendingEmailId === rec.id || !rec.email}
+                                          className={`p-1.5 rounded-lg transition ${
+                                            rec.email
+                                              ? 'text-emerald-600 hover:text-emerald-900 hover:bg-emerald-50'
+                                              : 'text-slate-300 cursor-not-allowed'
+                                          }`}
+                                          title={rec.email ? `Resend PIN to ${rec.email}` : 'Student has not registered a Gmail yet'}
+                                        >
+                                          <Mail className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          onClick={() => startEdit(rec)}
+                                          className="text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 p-1.5 rounded-lg transition"
+                                          title="Edit Grades or Reset Student Gmail"
+                                        >
+                                          <Pencil className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeleteRecord(rec.id)}
+                                          className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded-lg transition"
+                                          title="Delete Record"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </main>
@@ -813,7 +1209,6 @@ export default function App() {
   // ============================================================================
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800">
-      {/* Clean Student Header — No Teacher Admin Button Visible */}
       <header className="bg-indigo-950 text-white shadow-md">
         <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -829,7 +1224,6 @@ export default function App() {
       <main className="max-w-5xl mx-auto px-4 py-8">
         {!studentRecords ? (
           <div className="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-6">
-            {/* Two-Tab Switcher: Login vs Register Gmail */}
             <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50">
               <button
                 type="button"
@@ -1036,6 +1430,11 @@ export default function App() {
                         {rec.section}
                       </span>
                       <h3 className="font-bold text-lg text-slate-900">{rec.subject}</h3>
+                      {rec.instructor_name && (
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Instructor: <strong className="text-slate-700">{rec.instructor_name}</strong>
+                        </p>
+                      )}
                     </div>
                     <span
                       className={`px-3 py-1 rounded-full text-xs font-bold border ${
