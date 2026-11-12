@@ -5,7 +5,7 @@ import {
   LogOut, Eye, EyeOff, Trash2, CheckCircle2, AlertCircle, 
   Lock, Pencil, Check, X, Mail, Send, UserCheck, KeyRound, 
   ArrowLeft, UserPlus, Users, BookOpen, Clock, ChevronRight,
-  Settings, RefreshCw, Calendar, Plus, FolderOpen, Layers
+  Settings, RefreshCw, Calendar, Plus
 } from 'lucide-react';
 
 // Initialize Supabase Client from your .env file
@@ -20,10 +20,29 @@ const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const SAVED_INSTRUCTORS_KEY = 'ugp_saved_instructors_v1';
+const ACTIVE_INSTRUCTOR_SESSION_KEY = 'ugp_active_instructor_session_v1';
+const ACTIVE_TEACHER_TAB_KEY = 'ugp_active_teacher_tab_v1';
+const ACTIVE_PERIOD_KEY_STORAGE = 'ugp_active_period_key_v1';
+const ACTIVE_STUDENT_SESSION_KEY = 'ugp_active_student_session_v1';
 const CUSTOM_PERIODS_KEY_PREFIX = 'ugp_custom_periods_instructor_';
 
 const DEFAULT_SCHOOL_YEAR = '2026-2027';
 const DEFAULT_TERM = '1st Term';
+
+// Consistent Typography Classes Used Across All Cards & Modals
+const UI_TEXT = {
+  pageTitle: 'font-bold text-base sm:text-lg leading-tight truncate',
+  pageSubtitle: 'text-[11px] sm:text-xs text-slate-400 truncate',
+  authTitle: 'text-lg sm:text-xl font-bold text-slate-900 mb-1',
+  authSubtitle: 'text-xs sm:text-sm text-slate-500 mb-6',
+  cardTitle: 'text-base sm:text-lg font-bold text-slate-900 leading-snug',
+  cardSubtitle: 'text-xs sm:text-sm text-slate-500 mt-0.5',
+  subSectionTitle: 'text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-800',
+  modalTitle: 'font-bold text-sm sm:text-base leading-tight',
+  modalSubtitle: 'text-xs text-slate-400 mt-0.5',
+  label: 'block text-xs font-semibold uppercase tracking-wide text-slate-600 mb-1.5',
+  buttonText: 'text-xs sm:text-sm font-semibold',
+};
 
 const checkIsTeacherRoute = () => {
   const path = window.location.pathname.toLowerCase();
@@ -71,8 +90,8 @@ function PasswordStrengthChecklist({ password, confirmPassword, currentPassword 
   }
 
   return (
-    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
-      <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+      <span className="block text-xs font-bold uppercase tracking-wider text-slate-500">
         Password Security Requirements
       </span>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
@@ -109,13 +128,35 @@ export default function App() {
     };
   }, []);
 
-  // ================= STUDENT PORTAL STATE =================
+  // ================= STUDENT PORTAL STATE (Restores on Refresh) =================
   const [studentTab, setStudentTab] = useState('login'); // 'login' | 'register'
   const [studentIdInput, setStudentIdInput] = useState('');
   const [pinInput, setPinInput] = useState('');
   const [showPin, setShowPin] = useState(false);
-  const [studentRecords, setStudentRecords] = useState(null);
-  const [studentPeriodFilter, setStudentPeriodFilter] = useState('ALL');
+  const [studentRecords, setStudentRecords] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(ACTIVE_STUDENT_SESSION_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.records || null;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return null;
+  });
+  const [studentPeriodFilter, setStudentPeriodFilter] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(ACTIVE_STUDENT_SESSION_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.periodFilter || 'ALL';
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return 'ALL';
+  });
   const [studentError, setStudentError] = useState('');
   const [studentSuccess, setStudentSuccess] = useState('');
   const [loadingStudent, setLoadingStudent] = useState(false);
@@ -124,13 +165,35 @@ export default function App() {
   const [regGmail, setRegGmail] = useState('');
   const [sendingStudentPin, setSendingStudentPin] = useState(false);
 
-  // ================= INSTRUCTOR & SUPER ADMIN STATE =================
+  // ================= INSTRUCTOR & SUPER ADMIN STATE (Restores on Refresh) =================
   const [teacherAuthTab, setTeacherAuthTab] = useState('login'); // 'login' | 'signup' | 'forgot'
-  const [currentInstructor, setCurrentInstructor] = useState(null);
-  const [teacherViewTab, setTeacherViewTab] = useState('grades'); // 'grades' | 'faculty' | 'profile'
+  const [currentInstructor, setCurrentInstructor] = useState(() => {
+    try {
+      const saved = localStorage.getItem(ACTIVE_INSTRUCTOR_SESSION_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [teacherViewTab, setTeacherViewTab] = useState(() => {
+    try {
+      return localStorage.getItem(ACTIVE_TEACHER_TAB_KEY) || 'grades';
+    } catch {
+      return 'grades';
+    }
+  }); // 'grades' | 'faculty' | 'profile'
 
-  // ================= SCHOOL YEAR & TERM STATE =================
-  const [activePeriodKey, setActivePeriodKey] = useState(`${DEFAULT_SCHOOL_YEAR}|||${DEFAULT_TERM}`);
+  // ================= SCHOOL YEAR & TERM STATE (Restores on Refresh) =================
+  const [activePeriodKey, setActivePeriodKey] = useState(() => {
+    try {
+      return (
+        localStorage.getItem(ACTIVE_PERIOD_KEY_STORAGE) ||
+        `${DEFAULT_SCHOOL_YEAR}|||${DEFAULT_TERM}`
+      );
+    } catch {
+      return `${DEFAULT_SCHOOL_YEAR}|||${DEFAULT_TERM}`;
+    }
+  });
   const [customPeriods, setCustomPeriods] = useState([]);
   const [showNewPeriodModal, setShowNewPeriodModal] = useState(false);
   const [newSchoolYearInput, setNewSchoolYearInput] = useState('2026-2027');
@@ -171,9 +234,9 @@ export default function App() {
   const [sendingResetPin, setSendingResetPin] = useState(false);
 
   // Logged-In Instructor Profile & Security Verification Modal State
-  const [profileName, setProfileName] = useState('');
-  const [profileDept, setProfileDept] = useState('');
-  const [profileEmail, setProfileEmail] = useState('');
+  const [profileName, setProfileName] = useState(() => currentInstructor?.full_name || '');
+  const [profileDept, setProfileDept] = useState(() => currentInstructor?.department || 'CCIT');
+  const [profileEmail, setProfileEmail] = useState(() => currentInstructor?.email || '');
   const [profileStatusMsg, setProfileStatusMsg] = useState({ type: '', text: '' });
   const [savingProfile, setSavingProfile] = useState(false);
 
@@ -265,6 +328,57 @@ export default function App() {
   });
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Sync active tab & period selections to localStorage so browser refresh stays on the exact view
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_TEACHER_TAB_KEY, teacherViewTab);
+    } catch {
+      // ignore storage errors
+    }
+  }, [teacherViewTab]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_PERIOD_KEY_STORAGE, activePeriodKey);
+    } catch {
+      // ignore storage errors
+    }
+  }, [activePeriodKey]);
+
+  // Sync active instructor object to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      if (currentInstructor) {
+        localStorage.setItem(ACTIVE_INSTRUCTOR_SESSION_KEY, JSON.stringify(currentInstructor));
+      } else {
+        localStorage.removeItem(ACTIVE_INSTRUCTOR_SESSION_KEY);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [currentInstructor]);
+
+  // Sync student session to sessionStorage so refreshing on the student grade page keeps them logged in
+  useEffect(() => {
+    try {
+      if (studentRecords && studentRecords.length > 0) {
+        sessionStorage.setItem(
+          ACTIVE_STUDENT_SESSION_KEY,
+          JSON.stringify({
+            student_id: studentRecords[0].student_id,
+            pin: studentRecords[0].pin,
+            records: studentRecords,
+            periodFilter: studentPeriodFilter,
+          })
+        );
+      } else {
+        sessionStorage.removeItem(ACTIVE_STUDENT_SESSION_KEY);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [studentRecords, studentPeriodFilter]);
+
   // HELPER: Load & Save Custom Academic Periods for an Instructor
   const loadInstructorCustomPeriods = (instructorId) => {
     try {
@@ -277,6 +391,60 @@ export default function App() {
       return [];
     }
   };
+
+  // ON BROWSER REFRESH: Re-verify and reload live data from Supabase for active Instructor or Student sessions
+  useEffect(() => {
+    const restoreInstructorOnRefresh = async () => {
+      if (!currentInstructor?.id) return;
+      loadInstructorCustomPeriods(currentInstructor.id);
+      fetchInstructorRecords(currentInstructor);
+      if (currentInstructor.role === 'admin') {
+        fetchFacultyList();
+      }
+
+      const { data: freshInst } = await supabase
+        .from('instructors')
+        .select('*')
+        .eq('id', currentInstructor.id)
+        .maybeSingle();
+
+      if (freshInst && freshInst.status === 'approved') {
+        setCurrentInstructor(freshInst);
+        setProfileName(freshInst.full_name || '');
+        setProfileDept(freshInst.department || 'CCIT');
+        setProfileEmail(freshInst.email || '');
+      } else if (freshInst && freshInst.status !== 'approved') {
+        setCurrentInstructor(null);
+      }
+    };
+
+    const restoreStudentOnRefresh = async () => {
+      try {
+        const saved = sessionStorage.getItem(ACTIVE_STUDENT_SESSION_KEY);
+        if (!saved) return;
+        const parsed = JSON.parse(saved);
+        if (!parsed?.student_id || !parsed?.pin) return;
+
+        const { data } = await supabase
+          .from('student_grades')
+          .select('*')
+          .eq('student_id', parsed.student_id)
+          .eq('pin', parsed.pin)
+          .order('school_year', { ascending: false })
+          .order('term', { ascending: true });
+
+        if (data && data.length > 0) {
+          setStudentRecords(data);
+        }
+      } catch {
+        // ignore errors
+      }
+    };
+
+    restoreInstructorOnRefresh();
+    restoreStudentOnRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleCreateNewAcademicPeriod = (e) => {
     e.preventDefault();
@@ -393,7 +561,7 @@ export default function App() {
     }
 
     if (!data || data.length === 0) {
-      setStudentError('Invalid Student ID or PIN. Need your PIN? Click the "Register Gmail / PIN" tab above.');
+      setStudentError('Invalid Student ID or PIN. Need your PIN? Click the "Register Gmail" tab above.');
       return;
     }
 
@@ -500,6 +668,13 @@ export default function App() {
     if (instructorData.role === 'admin') {
       fetchFacultyList();
     }
+  };
+
+  const handleInstructorLogout = () => {
+    localStorage.removeItem(ACTIVE_INSTRUCTOR_SESSION_KEY);
+    setCurrentInstructor(null);
+    setLoginPassword('');
+    setAllRecords([]);
   };
 
   const handleInstructorLogin = async (e) => {
@@ -1249,8 +1424,7 @@ export default function App() {
     e.target.value = '';
   };
 
-  // ================= 6. SHOW / HIDE BREAKDOWN CONTROLS (INDIVIDUAL, BY SECTION, OR ENTIRE STUDENT LIST) =================
-  // A. Toggle Breakdown for a Single Student Row
+  // ================= 6. SHOW / HIDE BREAKDOWN CONTROLS =================
   const handleToggleSingleBreakdown = async (rec) => {
     const nextValue = !Boolean(rec.show_breakdown);
     const { error } = await supabase
@@ -1271,7 +1445,6 @@ export default function App() {
     }
   };
 
-  // B. Toggle Breakdown by Section (Updates all students in the selected section in the active term)
   const handleSetSectionBreakdownVisibility = async (targetSection, shouldShow) => {
     if (!currentInstructor || !targetSection || targetSection === 'ALL') return;
     setUpdatingBreakdown(true);
@@ -1309,7 +1482,6 @@ export default function App() {
     }
   };
 
-  // C. Toggle Breakdown for Entire Student List (All students in active term or entire instructor account)
   const handleSetAllStudentsBreakdownVisibility = async (shouldShow) => {
     if (!currentInstructor) return;
     setUpdatingBreakdown(true);
@@ -1484,7 +1656,6 @@ export default function App() {
     return matchSubject && matchSection && matchSearch;
   });
 
-  // Count how many students in the active period have breakdown visible
   const visibleBreakdownCount = periodFilteredRecords.filter((r) => Boolean(r.show_breakdown)).length;
 
   const pendingFacultyCount = facultyList.filter((f) => f.status === 'pending').length;
@@ -1531,53 +1702,52 @@ export default function App() {
     const { school_year: activeSyLabel, term: activeTermLabel } = getActiveSchoolYearAndTerm();
 
     return (
-      <div className="min-h-screen bg-slate-100 text-slate-800">
-        <header className="bg-slate-900 text-white shadow-md">
-          <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="w-8 h-8 text-amber-400" />
-              <div>
-                <h1 className="font-bold text-lg leading-tight">Faculty & Admin Portal</h1>
-                <p className="text-xs text-slate-400">
+      <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col">
+        {/* Responsive Top Header */}
+        <header className="bg-slate-900 text-white shadow-md sticky top-0 z-30">
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+              <ShieldCheck className="w-7 h-7 sm:w-8 sm:h-8 text-amber-400 shrink-0" />
+              <div className="min-w-0">
+                <h1 className={UI_TEXT.pageTitle}>Faculty & Admin Portal</h1>
+                <p className={UI_TEXT.pageSubtitle}>
                   {currentInstructor
-                    ? `Logged in: ${currentInstructor.full_name} (${currentInstructor.department} • ${currentInstructor.role.toUpperCase()})`
+                    ? `${currentInstructor.full_name} (${currentInstructor.department} • ${currentInstructor.role.toUpperCase()})`
                     : 'University Grade Management System'}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+
+            <div className="flex items-center gap-2 shrink-0 ml-auto sm:ml-0">
               <a
                 href="#/"
                 onClick={() => {
                   window.history.pushState({}, '', '/');
                   setIsTeacherRoute(false);
                 }}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1.5 transition"
+                className="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1.5 transition"
               >
-                <ArrowLeft className="w-4 h-4" />
-                Student View
+                <ArrowLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span>Student View</span>
               </a>
               {currentInstructor && (
                 <button
-                  onClick={() => {
-                    setCurrentInstructor(null);
-                    setLoginPassword('');
-                    setAllRecords([]);
-                  }}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600 hover:bg-red-700 text-white flex items-center gap-1.5 transition"
+                  onClick={handleInstructorLogout}
+                  className="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-700 text-white flex items-center gap-1.5 transition"
                 >
-                  <LogOut className="w-4 h-4" />
-                  Switch / Lock Account
+                  <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span className="hidden xs:inline">Switch /</span>
+                  <span>Lock</span>
                 </button>
               )}
             </div>
           </div>
         </header>
 
-        <main className="max-w-7xl mx-auto px-4 py-8">
+        <main className="max-w-7xl w-full mx-auto px-3 sm:px-6 py-5 sm:py-8 flex-1">
           {!currentInstructor ? (
             // ================= INSTRUCTOR LOGIN / SAVED CARDS / FORGOT / SIGNUP =================
-            <div className="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-6">
+            <div className="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-2 sm:mt-6">
               <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50">
                 <button
                   type="button"
@@ -1591,8 +1761,8 @@ export default function App() {
                       : 'border-transparent text-slate-500 hover:text-slate-700'
                   }`}
                 >
-                  <ShieldCheck className="w-4 h-4" />
-                  Instructor Login
+                  <ShieldCheck className="w-4 h-4 shrink-0" />
+                  <span>Instructor Login</span>
                 </button>
                 <button
                   type="button"
@@ -1607,21 +1777,21 @@ export default function App() {
                       : 'border-transparent text-slate-500 hover:text-slate-700'
                   }`}
                 >
-                  <UserPlus className="w-4 h-4" />
-                  Request Account
+                  <UserPlus className="w-4 h-4 shrink-0" />
+                  <span>Request Account</span>
                 </button>
               </div>
 
-              <div className="p-6 sm:p-8">
+              <div className="p-5 sm:p-8">
                 {teacherAuthError && (
-                  <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-start gap-2">
+                  <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs sm:text-sm flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                     <span>{teacherAuthError}</span>
                   </div>
                 )}
 
                 {teacherAuthSuccess && (
-                  <div className="mb-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-start gap-2">
+                  <div className="mb-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
                     <span>{teacherAuthSuccess}</span>
                   </div>
@@ -1642,8 +1812,8 @@ export default function App() {
                       <ArrowLeft className="w-3.5 h-3.5" /> Back to Sign In
                     </button>
 
-                    <h2 className="text-xl font-bold text-slate-900 mb-1">Reset Instructor Password</h2>
-                    <p className="text-sm text-slate-500 mb-5">
+                    <h2 className={UI_TEXT.authTitle}>Reset Instructor Password</h2>
+                    <p className={UI_TEXT.authSubtitle}>
                       {resetStep === 1
                         ? 'Enter your registered faculty email to receive a 6-digit password reset code.'
                         : 'Enter the 6-digit code sent to your email and create a strong new password.'}
@@ -1652,22 +1822,20 @@ export default function App() {
                     {resetStep === 1 ? (
                       <form onSubmit={handleSendPasswordResetCode} className="space-y-4">
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            Registered Instructor Email
-                          </label>
+                          <label className={UI_TEXT.label}>Registered Instructor Email</label>
                           <input
                             type="email"
                             required
                             placeholder="instructor@unp.edu.ph"
                             value={resetEmailInput}
                             onChange={(e) => setResetEmailInput(e.target.value)}
-                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                           />
                         </div>
                         <button
                           type="submit"
                           disabled={sendingResetPin}
-                          className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition"
+                          className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
                         >
                           <Send className="w-4 h-4" />
                           {sendingResetPin ? 'Sending Verification Code...' : 'Send 6-Digit Reset Code'}
@@ -1676,9 +1844,7 @@ export default function App() {
                     ) : (
                       <form onSubmit={handleCompletePasswordReset} className="space-y-4">
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            6-Digit Verification Code
-                          </label>
+                          <label className={UI_TEXT.label}>6-Digit Verification Code</label>
                           <input
                             type="text"
                             required
@@ -1690,9 +1856,7 @@ export default function App() {
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            New Password
-                          </label>
+                          <label className={UI_TEXT.label}>New Password</label>
                           <div className="relative">
                             <input
                               type={showResetNewPass ? 'text' : 'password'}
@@ -1700,7 +1864,7 @@ export default function App() {
                               placeholder="Create strong password"
                               value={resetNewPassword}
                               onChange={(e) => setResetNewPassword(e.target.value)}
-                              className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                              className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                             />
                             <button
                               type="button"
@@ -1713,9 +1877,7 @@ export default function App() {
                           </div>
                         </div>
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            Confirm New Password
-                          </label>
+                          <label className={UI_TEXT.label}>Confirm New Password</label>
                           <div className="relative">
                             <input
                               type={showResetConfirmPass ? 'text' : 'password'}
@@ -1723,7 +1885,7 @@ export default function App() {
                               placeholder="Re-enter new password"
                               value={resetConfirmPassword}
                               onChange={(e) => setResetConfirmPassword(e.target.value)}
-                              className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                              className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                             />
                             <button
                               type="button"
@@ -1744,7 +1906,7 @@ export default function App() {
                         <button
                           type="submit"
                           disabled={loadingAuth}
-                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg transition"
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
                         >
                           {loadingAuth ? 'Updating Password...' : 'Save New Password'}
                         </button>
@@ -1771,16 +1933,16 @@ export default function App() {
                         <ArrowLeft className="w-3.5 h-3.5" /> Choose another account
                       </button>
 
-                      <div className="flex items-center gap-3.5 p-3.5 rounded-xl bg-slate-50 border border-slate-200 mb-5">
+                      <div className="flex items-center gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200 mb-5">
                         <div className="w-11 h-11 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-sm shrink-0">
                           {getInitials(selectedSavedAccount.full_name)}
                         </div>
                         <div className="overflow-hidden">
-                          <h3 className="font-bold text-slate-900 text-sm truncate">
+                          <h3 className="font-bold text-slate-900 text-sm sm:text-base truncate">
                             {selectedSavedAccount.full_name}
                           </h3>
                           <p className="text-xs text-slate-500 truncate">{selectedSavedAccount.email}</p>
-                          <span className="inline-block mt-0.5 text-[10px] font-bold uppercase px-2 py-0.2 rounded bg-indigo-50 text-indigo-700">
+                          <span className="inline-block mt-0.5 text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">
                             {selectedSavedAccount.department} • {selectedSavedAccount.role}
                           </span>
                         </div>
@@ -1822,8 +1984,8 @@ export default function App() {
                       {loginMethod === 'password' ? (
                         <form onSubmit={handleInstructorLogin} className="space-y-4">
                           <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="block text-xs font-semibold uppercase text-slate-600">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
                                 Instructor Password
                               </label>
                               <button
@@ -1842,7 +2004,7 @@ export default function App() {
                                 placeholder="Enter your password"
                                 value={loginPassword}
                                 onChange={(e) => setLoginPassword(e.target.value)}
-                                className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                                className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                               />
                               <button
                                 type="button"
@@ -1857,7 +2019,7 @@ export default function App() {
                           <button
                             type="submit"
                             disabled={loadingAuth}
-                            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-lg transition"
+                            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-lg text-sm transition"
                           >
                             {loadingAuth ? 'Signing In...' : 'Sign In with Password'}
                           </button>
@@ -1866,15 +2028,15 @@ export default function App() {
                         <div className="space-y-4">
                           {!generatedLoginPin ? (
                             <div className="text-center py-2">
-                              <p className="text-xs text-slate-600 mb-4">
+                              <p className="text-xs sm:text-sm text-slate-600 mb-4">
                                 We will send a one-time 6-digit login PIN to{' '}
-                                <strong className="text-slate-900">{selectedSavedAccount.email}</strong>.
+                                <strong className="text-slate-900 break-all">{selectedSavedAccount.email}</strong>.
                               </p>
                               <button
                                 type="button"
                                 onClick={handleSendInstructorLoginPin}
                                 disabled={sendingInstructorPin}
-                                className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition"
+                                className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
                               >
                                 <Send className="w-4 h-4" />
                                 {sendingInstructorPin ? 'Sending PIN to Email...' : 'Send 6-Digit PIN to My Email'}
@@ -1883,9 +2045,7 @@ export default function App() {
                           ) : (
                             <form onSubmit={handleVerifyInstructorPin} className="space-y-4">
                               <div>
-                                <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                                  Enter 6-Digit Email PIN
-                                </label>
+                                <label className={UI_TEXT.label}>Enter 6-Digit Email PIN</label>
                                 <input
                                   type="text"
                                   required
@@ -1900,7 +2060,7 @@ export default function App() {
                               <button
                                 type="submit"
                                 disabled={loadingAuth}
-                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg transition"
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
                               >
                                 {loadingAuth ? 'Verifying PIN...' : 'Verify PIN & Sign In'}
                               </button>
@@ -1908,7 +2068,7 @@ export default function App() {
                                 type="button"
                                 onClick={handleSendInstructorLoginPin}
                                 disabled={sendingInstructorPin}
-                                className="w-full text-xs text-indigo-600 hover:underline font-medium"
+                                className="w-full text-xs text-indigo-600 hover:underline font-semibold"
                               >
                                 {sendingInstructorPin ? 'Resending...' : 'Resend PIN to my email'}
                               </button>
@@ -1920,8 +2080,8 @@ export default function App() {
                   ) : savedInstructors.length > 0 && !selectedSavedAccount?.isNewManual ? (
                     // VIEW B: SAVED ACCOUNT CARDS LIST
                     <div>
-                      <h2 className="text-xl font-bold text-slate-900 mb-1">Welcome Back</h2>
-                      <p className="text-sm text-slate-500 mb-5">
+                      <h2 className={UI_TEXT.authTitle}>Welcome Back</h2>
+                      <p className={UI_TEXT.authSubtitle}>
                         Select your saved faculty account to sign in quickly.
                       </p>
 
@@ -1966,7 +2126,7 @@ export default function App() {
                         onClick={() => {
                           setSelectedSavedAccount({ isNewManual: true });
                         }}
-                        className="w-full py-2.5 px-4 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 text-xs font-semibold text-slate-600 hover:text-indigo-700 flex items-center justify-center gap-1.5 transition"
+                        className="w-full py-2.5 px-4 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 text-xs sm:text-sm font-semibold text-slate-600 hover:text-indigo-700 flex items-center justify-center gap-1.5 transition"
                       >
                         <UserPlus className="w-4 h-4" />
                         Use another instructor account
@@ -1991,8 +2151,8 @@ export default function App() {
                           <ArrowLeft className="w-3.5 h-3.5" /> Back to saved accounts
                         </button>
                       )}
-                      <h2 className="text-xl font-bold text-slate-900 mb-1">Faculty Sign In</h2>
-                      <p className="text-sm text-slate-500 mb-6">
+                      <h2 className={UI_TEXT.authTitle}>Faculty Sign In</h2>
+                      <p className={UI_TEXT.authSubtitle}>
                         Log in with your approved instructor email and password.
                       </p>
                       <form
@@ -2003,21 +2163,19 @@ export default function App() {
                         className="space-y-4"
                       >
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            Instructor Email
-                          </label>
+                          <label className={UI_TEXT.label}>Instructor Email</label>
                           <input
                             type="email"
                             required
                             placeholder="instructor@unp.edu.ph"
                             value={loginEmail}
                             onChange={(e) => setLoginEmail(e.target.value)}
-                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                           />
                         </div>
                         <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="block text-xs font-semibold uppercase text-slate-600">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
                               Password
                             </label>
                             <button
@@ -2035,7 +2193,7 @@ export default function App() {
                               placeholder="Enter password"
                               value={loginPassword}
                               onChange={(e) => setLoginPassword(e.target.value)}
-                              className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                              className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                             />
                             <button
                               type="button"
@@ -2050,7 +2208,7 @@ export default function App() {
                         <button
                           type="submit"
                           disabled={loadingAuth}
-                          className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-lg transition"
+                          className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-lg text-sm transition"
                         >
                           {loadingAuth ? 'Signing In...' : 'Sign In to Dashboard'}
                         </button>
@@ -2061,54 +2219,46 @@ export default function App() {
                 {/* VIEW D: REQUEST NEW INSTRUCTOR ACCOUNT */}
                 {teacherAuthTab === 'signup' && (
                   <>
-                    <h2 className="text-xl font-bold text-slate-900 mb-1">Request Instructor Account</h2>
-                    <p className="text-sm text-slate-500 mb-6">
+                    <h2 className={UI_TEXT.authTitle}>Request Instructor Account</h2>
+                    <p className={UI_TEXT.authSubtitle}>
                       Submit your details below. The Super Admin must approve your account before you can upload grades.
                     </p>
                     <form onSubmit={handleInstructorSignup} className="space-y-4">
                       <div>
-                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                          Full Name (Displayed to Students)
-                        </label>
+                        <label className={UI_TEXT.label}>Full Name (Displayed to Students)</label>
                         <input
                           type="text"
                           required
                           placeholder="e.g., JUAN DELA CRUZ"
                           value={signupName}
                           onChange={(e) => setSignupName(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                          College / Department
-                        </label>
+                        <label className={UI_TEXT.label}>College / Department</label>
                         <input
                           type="text"
                           required
                           placeholder="e.g., CCIT"
                           value={signupDept}
                           onChange={(e) => setSignupDept(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                          Email Address
-                        </label>
+                        <label className={UI_TEXT.label}>Email Address</label>
                         <input
                           type="email"
                           required
                           placeholder="your.email@unp.edu.ph"
                           value={signupEmail}
                           onChange={(e) => setSignupEmail(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                          Create Strong Password
-                        </label>
+                        <label className={UI_TEXT.label}>Create Strong Password</label>
                         <div className="relative">
                           <input
                             type={showSignupPass ? 'text' : 'password'}
@@ -2116,7 +2266,7 @@ export default function App() {
                             placeholder="Enter strong password"
                             value={signupPassword}
                             onChange={(e) => setSignupPassword(e.target.value)}
-                            className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                           />
                           <button
                             type="button"
@@ -2130,9 +2280,7 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                          Confirm Password
-                        </label>
+                        <label className={UI_TEXT.label}>Confirm Password</label>
                         <div className="relative">
                           <input
                             type={showSignupConfirmPass ? 'text' : 'password'}
@@ -2140,7 +2288,7 @@ export default function App() {
                             placeholder="Re-enter your password"
                             value={signupConfirmPassword}
                             onChange={(e) => setSignupConfirmPassword(e.target.value)}
-                            className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                           />
                           <button
                             type="button"
@@ -2165,7 +2313,7 @@ export default function App() {
                           !evaluatePasswordStrength(signupPassword).isValid ||
                           signupPassword !== signupConfirmPassword
                         }
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg transition"
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg text-sm transition"
                       >
                         {loadingAuth ? 'Submitting Request...' : 'Submit Account Request'}
                       </button>
@@ -2176,18 +2324,19 @@ export default function App() {
             </div>
           ) : (
             // ================= LOGGED-IN INSTRUCTOR / SUPER ADMIN DASHBOARD =================
-            <div className="space-y-6">
-              <div className="flex flex-wrap gap-3 border-b border-slate-200 pb-4">
+            <div className="space-y-5 sm:space-y-6">
+              {/* Responsive Dashboard Navigation Tabs */}
+              <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3 sm:pb-4">
                 <button
                   onClick={() => setTeacherViewTab('grades')}
-                  className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition ${
+                  className={`flex-1 sm:flex-none justify-center px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition ${
                     teacherViewTab === 'grades'
                       ? 'bg-slate-900 text-white shadow-sm'
                       : 'bg-white text-slate-600 hover:bg-slate-200/60 border border-slate-200'
                   }`}
                 >
-                  <BookOpen className="w-4 h-4" />
-                  My Class Records ({allRecords.length})
+                  <BookOpen className="w-4 h-4 shrink-0" />
+                  <span>My Class Records ({allRecords.length})</span>
                 </button>
 
                 {currentInstructor.role === 'admin' && (
@@ -2196,17 +2345,17 @@ export default function App() {
                       setTeacherViewTab('faculty');
                       fetchFacultyList();
                     }}
-                    className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition ${
+                    className={`flex-1 sm:flex-none justify-center px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition ${
                       teacherViewTab === 'faculty'
                         ? 'bg-slate-900 text-white shadow-sm'
                         : 'bg-white text-slate-600 hover:bg-slate-200/60 border border-slate-200'
                     }`}
                   >
-                    <Users className="w-4 h-4" />
-                    Faculty Account Approvals
+                    <Users className="w-4 h-4 shrink-0" />
+                    <span>Faculty Approvals</span>
                     {pendingFacultyCount > 0 && (
-                      <span className="px-2 py-0.5 text-xs rounded-full bg-amber-400 text-slate-950 font-extrabold">
-                        {pendingFacultyCount} Pending
+                      <span className="px-2 py-0.5 text-[11px] rounded-full bg-amber-400 text-slate-950 font-extrabold">
+                        {pendingFacultyCount}
                       </span>
                     )}
                   </button>
@@ -2226,33 +2375,35 @@ export default function App() {
                     setProfileVerifyMsg({ type: '', text: '' });
                     setPasswordStatusMsg({ type: '', text: '' });
                   }}
-                  className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition ${
+                  className={`flex-1 sm:flex-none justify-center px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition ${
                     teacherViewTab === 'profile'
                       ? 'bg-slate-900 text-white shadow-sm'
                       : 'bg-white text-slate-600 hover:bg-slate-200/60 border border-slate-200'
                   }`}
                 >
-                  <Settings className="w-4 h-4" />
-                  Account & Password Settings
+                  <Settings className="w-4 h-4 shrink-0" />
+                  <span>Account Settings</span>
                 </button>
               </div>
 
               {teacherViewTab === 'profile' ? (
                 // ================= TAB 3: INSTRUCTOR PROFILE & PASSWORD SETTINGS =================
                 <>
-                  <div className="grid gap-6 md:grid-cols-2">
-                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                      <div className="flex items-center gap-2.5 mb-1">
-                        <UserCheck className="w-5 h-5 text-indigo-600" />
-                        <h2 className="text-lg font-bold text-slate-900">Instructor Profile</h2>
+                  <div className="grid gap-5 sm:gap-6 md:grid-cols-2">
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6">
+                      <div className="mb-5">
+                        <div className="flex items-center gap-2.5">
+                          <UserCheck className="w-5 h-5 text-indigo-600 shrink-0" />
+                          <h2 className={UI_TEXT.cardTitle}>Instructor Profile</h2>
+                        </div>
+                        <p className={UI_TEXT.cardSubtitle}>
+                          For your security, any change to your profile or login email opens a verification modal requiring your password or a 6-digit email PIN.
+                        </p>
                       </div>
-                      <p className="text-xs text-slate-500 mb-5">
-                        For your security, any change to your profile or login email opens a verification modal requiring your password or a 6-digit email PIN.
-                      </p>
 
                       {profileStatusMsg.text && (
                         <div
-                          className={`mb-4 p-3 rounded-lg text-xs font-medium flex items-center gap-2 ${
+                          className={`mb-4 p-3 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 ${
                             profileStatusMsg.type === 'error'
                               ? 'bg-red-50 text-red-700 border border-red-200'
                               : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
@@ -2269,39 +2420,33 @@ export default function App() {
 
                       <form onSubmit={handleInitiateProfileSave} className="space-y-4">
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            Full Name (Displayed on Student Cards)
-                          </label>
+                          <label className={UI_TEXT.label}>Full Name (Displayed on Student Cards)</label>
                           <input
                             type="text"
                             required
                             value={profileName}
                             onChange={(e) => setProfileName(e.target.value)}
-                            className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            College / Department
-                          </label>
+                          <label className={UI_TEXT.label}>College / Department</label>
                           <input
                             type="text"
                             required
                             value={profileDept}
                             onChange={(e) => setProfileDept(e.target.value)}
-                            className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            Login Email Address
-                          </label>
+                          <label className={UI_TEXT.label}>Login Email Address</label>
                           <input
                             type="email"
                             required
                             value={profileEmail}
                             onChange={(e) => setProfileEmail(e.target.value)}
-                            className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                           />
                         </div>
                         <button
@@ -2313,18 +2458,20 @@ export default function App() {
                       </form>
                     </div>
 
-                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                      <div className="flex items-center gap-2.5 mb-1">
-                        <KeyRound className="w-5 h-5 text-indigo-600" />
-                        <h2 className="text-lg font-bold text-slate-900">Change Password</h2>
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6">
+                      <div className="mb-5">
+                        <div className="flex items-center gap-2.5">
+                          <KeyRound className="w-5 h-5 text-indigo-600 shrink-0" />
+                          <h2 className={UI_TEXT.cardTitle}>Change Password</h2>
+                        </div>
+                        <p className={UI_TEXT.cardSubtitle}>
+                          Update your instructor portal password. Your new password must be different from your current password.
+                        </p>
                       </div>
-                      <p className="text-xs text-slate-500 mb-5">
-                        Update your instructor portal password. Your new password must be different from your current password.
-                      </p>
 
                       {passwordStatusMsg.text && (
                         <div
-                          className={`mb-4 p-3 rounded-lg text-xs font-medium flex items-center gap-2 ${
+                          className={`mb-4 p-3 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 ${
                             passwordStatusMsg.type === 'error'
                               ? 'bg-red-50 text-red-700 border border-red-200'
                               : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
@@ -2335,15 +2482,13 @@ export default function App() {
                           ) : (
                             <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
                           )}
-                          {passwordStatusMsg.text}
+                          <span>{passwordStatusMsg.text}</span>
                         </div>
                       )}
 
                       <form onSubmit={handleUpdateInstructorPassword} className="space-y-4">
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            Current Password
-                          </label>
+                          <label className={UI_TEXT.label}>Current Password</label>
                           <div className="relative">
                             <input
                               type={showCurrentPass ? 'text' : 'password'}
@@ -2351,12 +2496,12 @@ export default function App() {
                               placeholder="Enter current password"
                               value={currentPassInput}
                               onChange={(e) => setCurrentPassInput(e.target.value)}
-                              className="w-full px-3.5 py-2 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                              className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                             />
                             <button
                               type="button"
                               onClick={() => setShowCurrentPass(!showCurrentPass)}
-                              className="absolute right-3 top-2 text-slate-400 hover:text-slate-600"
+                              className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
                               title={showCurrentPass ? 'Hide current password' : 'Show current password'}
                             >
                               {showCurrentPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -2365,9 +2510,7 @@ export default function App() {
                         </div>
 
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            New Strong Password
-                          </label>
+                          <label className={UI_TEXT.label}>New Strong Password</label>
                           <div className="relative">
                             <input
                               type={showNewPass ? 'text' : 'password'}
@@ -2375,12 +2518,12 @@ export default function App() {
                               placeholder="Enter new strong password"
                               value={newPassInput}
                               onChange={(e) => setNewPassInput(e.target.value)}
-                              className="w-full px-3.5 py-2 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                              className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                             />
                             <button
                               type="button"
                               onClick={() => setShowNewPass(!showNewPass)}
-                              className="absolute right-3 top-2 text-slate-400 hover:text-slate-600"
+                              className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
                               title={showNewPass ? 'Hide new password' : 'Show new password'}
                             >
                               {showNewPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -2389,9 +2532,7 @@ export default function App() {
                         </div>
 
                         <div>
-                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                            Confirm New Password
-                          </label>
+                          <label className={UI_TEXT.label}>Confirm New Password</label>
                           <div className="relative">
                             <input
                               type={showConfirmPass ? 'text' : 'password'}
@@ -2399,12 +2540,12 @@ export default function App() {
                               placeholder="Re-enter new password"
                               value={confirmPassInput}
                               onChange={(e) => setConfirmPassInput(e.target.value)}
-                              className="w-full px-3.5 py-2 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                              className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                             />
                             <button
                               type="button"
                               onClick={() => setShowConfirmPass(!showConfirmPass)}
-                              className="absolute right-3 top-2 text-slate-400 hover:text-slate-600"
+                              className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
                               title={showConfirmPass ? 'Hide confirm password' : 'Show confirm password'}
                             >
                               {showConfirmPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -2438,24 +2579,24 @@ export default function App() {
                   {/* CENTERED MODAL OVERLAY FOR PROFILE IDENTITY VERIFICATION */}
                   {showProfileVerify && (
                     <div
-                      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+                      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-3 sm:p-4"
                       onClick={() => {
                         setShowProfileVerify(false);
                         setProfileVerifyMsg({ type: '', text: '' });
                       }}
                     >
                       <div
-                        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+                        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+                        <div className="bg-slate-900 text-white px-5 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
                           <div className="flex items-center gap-2.5">
                             <ShieldCheck className="w-5 h-5 text-amber-400 shrink-0" />
                             <div>
-                              <h3 className="font-bold text-sm leading-tight">
+                              <h3 className={UI_TEXT.modalTitle}>
                                 Verify Identity to Save Changes
                               </h3>
-                              <p className="text-[11px] text-slate-400">
+                              <p className={UI_TEXT.modalSubtitle}>
                                 Confirm with your password or a 6-digit email PIN
                               </p>
                             </div>
@@ -2473,10 +2614,10 @@ export default function App() {
                           </button>
                         </div>
 
-                        <div className="p-6 space-y-4">
+                        <div className="p-5 sm:p-6 space-y-4">
                           {profileVerifyMsg.text && (
                             <div
-                              className={`p-3 rounded-lg text-xs font-medium flex items-start gap-2 ${
+                              className={`p-3 rounded-lg text-xs sm:text-sm font-medium flex items-start gap-2 ${
                                 profileVerifyMsg.type === 'error'
                                   ? 'bg-red-50 text-red-700 border border-red-200'
                                   : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
@@ -2492,23 +2633,23 @@ export default function App() {
                           )}
 
                           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1.5 text-slate-600">
-                            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                               Pending Profile Update
                             </span>
                             <div className="flex justify-between gap-2">
-                              <span className="text-slate-500">Full Name:</span>
+                              <span className="text-slate-500 shrink-0">Full Name:</span>
                               <strong className="text-slate-900 truncate">
                                 {profileName.trim().toUpperCase()}
                               </strong>
                             </div>
                             <div className="flex justify-between gap-2">
-                              <span className="text-slate-500">Department:</span>
+                              <span className="text-slate-500 shrink-0">Department:</span>
                               <strong className="text-slate-900">
                                 {profileDept.trim() || 'CCIT'}
                               </strong>
                             </div>
                             <div className="flex justify-between gap-2">
-                              <span className="text-slate-500">Login Email:</span>
+                              <span className="text-slate-500 shrink-0">Login Email:</span>
                               <strong className="font-mono text-indigo-700 truncate">
                                 {profileEmail.trim().toLowerCase()}
                               </strong>
@@ -2551,9 +2692,7 @@ export default function App() {
                           {profileVerifyMethod === 'password' ? (
                             <form onSubmit={handleConfirmAndSaveProfile} className="space-y-4">
                               <div>
-                                <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                                  Enter Current Password
-                                </label>
+                                <label className={UI_TEXT.label}>Enter Current Password</label>
                                 <div className="relative">
                                   <input
                                     type={showProfileVerifyPass ? 'text' : 'password'}
@@ -2579,21 +2718,21 @@ export default function App() {
                                 </div>
                               </div>
 
-                              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                              <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 pt-2 border-t border-slate-100">
                                 <button
                                   type="button"
                                   onClick={() => {
                                     setShowProfileVerify(false);
                                     setProfileVerifyMsg({ type: '', text: '' });
                                   }}
-                                  className="px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition"
+                                  className="w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold transition"
                                 >
                                   Cancel
                                 </button>
                                 <button
                                   type="submit"
                                   disabled={savingProfile}
-                                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition"
+                                  className="w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold transition"
                                 >
                                   {savingProfile ? 'Verifying & Saving...' : 'Confirm & Save Changes'}
                                 </button>
@@ -2603,9 +2742,9 @@ export default function App() {
                             <div className="space-y-4">
                               {!profileGeneratedPin ? (
                                 <div className="text-center py-2">
-                                  <p className="text-xs text-slate-600 mb-4">
+                                  <p className="text-xs sm:text-sm text-slate-600 mb-4">
                                     We will send a 6-digit confirmation PIN to your registered email:{' '}
-                                    <strong className="text-slate-900">{currentInstructor.email}</strong>
+                                    <strong className="text-slate-900 break-all">{currentInstructor.email}</strong>
                                   </p>
                                   <button
                                     type="button"
@@ -2620,9 +2759,7 @@ export default function App() {
                               ) : (
                                 <form onSubmit={handleConfirmAndSaveProfile} className="space-y-4">
                                   <div>
-                                    <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                                      Enter 6-Digit Email PIN
-                                    </label>
+                                    <label className={UI_TEXT.label}>Enter 6-Digit Email PIN</label>
                                     <input
                                       type="text"
                                       required
@@ -2635,30 +2772,30 @@ export default function App() {
                                     />
                                   </div>
 
-                                  <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-slate-100">
                                     <button
                                       type="button"
                                       onClick={handleSendProfileVerifyPin}
                                       disabled={sendingProfilePin}
-                                      className="text-xs text-indigo-600 hover:underline font-semibold"
+                                      className="text-xs text-indigo-600 hover:underline font-semibold text-center sm:text-left py-1"
                                     >
                                       {sendingProfilePin ? 'Resending...' : 'Resend PIN'}
                                     </button>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-col-reverse sm:flex-row items-center gap-2">
                                       <button
                                         type="button"
                                         onClick={() => {
                                           setShowProfileVerify(false);
                                           setProfileVerifyMsg({ type: '', text: '' });
                                         }}
-                                        className="px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition"
+                                        className="w-full sm:w-auto px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold transition"
                                       >
                                         Cancel
                                       </button>
                                       <button
                                         type="submit"
                                         disabled={savingProfile}
-                                        className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition"
+                                        className="w-full sm:w-auto px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold transition"
                                       >
                                         {savingProfile ? 'Verifying & Saving...' : 'Verify PIN & Save'}
                                       </button>
@@ -2674,18 +2811,20 @@ export default function App() {
                   )}
                 </>
               ) : teacherViewTab === 'faculty' && currentInstructor.role === 'admin' ? (
-                // ================= TAB 2: SUPER ADMIN FACULTY APPROVAL & PASSWORD RESET MODAL =================
+                // ================= TAB 2: SUPER ADMIN FACULTY APPROVAL (MOBILE CARDS + DESKTOP TABLE) =================
                 <>
-                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                    <div className="mb-6">
-                      <h2 className="text-lg font-bold text-slate-900">Instructor Account Requests & Directory</h2>
-                      <p className="text-sm text-slate-500">
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6">
+                    <div className="mb-5 sm:mb-6">
+                      <h2 className={UI_TEXT.cardTitle}>
+                        Instructor Account Requests & Directory
+                      </h2>
+                      <p className={UI_TEXT.cardSubtitle}>
                         Approve faculty requests, or reset an instructor's password if they get locked out.
                       </p>
                     </div>
 
                     {facultyActionBanner && (
-                      <div className="mb-5 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between">
+                      <div className="mb-5 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs sm:text-sm font-semibold flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                           <span>{facultyActionBanner}</span>
@@ -2693,17 +2832,100 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => setFacultyActionBanner('')}
-                          className="text-xs text-emerald-600 hover:text-emerald-900"
+                          className="text-xs text-emerald-600 hover:text-emerald-900 shrink-0"
                         >
                           Dismiss
                         </button>
                       </div>
                     )}
 
-                    <div className="overflow-x-auto">
+                    {/* MOBILE & TABLET CARD VIEW (< md) */}
+                    <div className="md:hidden space-y-3">
+                      {facultyList.map((fac) => (
+                        <div
+                          key={fac.id}
+                          className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <h3 className="font-bold text-slate-900 text-sm sm:text-base truncate">
+                                {fac.full_name}
+                              </h3>
+                              <p className="text-xs font-mono text-slate-600 break-all">
+                                {fac.email}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold text-[11px] uppercase">
+                                  {fac.department} • {fac.role}
+                                </span>
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                                    fac.status === 'approved'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : fac.status === 'pending'
+                                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      : 'bg-red-50 text-red-700 border border-red-200'
+                                  }`}
+                                >
+                                  {fac.status === 'pending' && <Clock className="w-3 h-3" />}
+                                  {fac.status.toUpperCase()}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200">
+                            <button
+                              onClick={() => {
+                                setAdminResetFaculty(fac);
+                                setAdminNewPass('');
+                                setAdminConfirmPass('');
+                                setShowAdminResetPass(false);
+                                setShowAdminResetConfirmPass(false);
+                                setAdminResetMsg({ type: '', text: '' });
+                              }}
+                              className="flex-1 justify-center px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold inline-flex items-center gap-1 transition"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              Reset Pass
+                            </button>
+                            {fac.role !== 'admin' && (
+                              <>
+                                {fac.status !== 'approved' && (
+                                  <button
+                                    onClick={() => handleUpdateFacultyStatus(fac.id, 'approved')}
+                                    className="flex-1 justify-center px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition"
+                                  >
+                                    Approve
+                                  </button>
+                                )}
+                                {fac.status !== 'rejected' && (
+                                  <button
+                                    onClick={() => handleUpdateFacultyStatus(fac.id, 'rejected')}
+                                    className="flex-1 justify-center px-3 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-semibold transition"
+                                  >
+                                    Reject
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleDeleteFaculty(fac)}
+                                  className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg border border-red-200 bg-white transition"
+                                  title="Delete Instructor"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* DESKTOP TABLE VIEW (md and up) */}
+                    <div className="hidden md:block overflow-x-auto">
                       <table className="w-full text-left border-collapse text-sm">
                         <thead>
-                          <tr className="border-b border-slate-200 text-slate-500 uppercase text-xs">
+                          <tr className="border-b border-slate-200 text-slate-500 uppercase text-xs font-bold tracking-wider">
                             <th className="py-3 px-3">Instructor Name</th>
                             <th className="py-3 px-3">Department</th>
                             <th className="py-3 px-3">Email</th>
@@ -2787,7 +3009,7 @@ export default function App() {
                   {/* CENTERED MODAL OVERLAY FOR SUPER ADMIN PASSWORD OVERRIDE */}
                   {adminResetFaculty && (
                     <div
-                      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+                      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-3 sm:p-4"
                       onClick={() => {
                         setAdminResetFaculty(null);
                         setAdminNewPass('');
@@ -2796,17 +3018,17 @@ export default function App() {
                       }}
                     >
                       <div
-                        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+                        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+                        <div className="bg-slate-900 text-white px-5 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
                           <div className="flex items-center gap-2.5">
                             <KeyRound className="w-5 h-5 text-amber-400 shrink-0" />
                             <div>
-                              <h3 className="font-bold text-sm leading-tight">
+                              <h3 className={UI_TEXT.modalTitle}>
                                 Super Admin Password Override
                               </h3>
-                              <p className="text-[11px] text-slate-400">
+                              <p className={UI_TEXT.modalSubtitle}>
                                 Set a new strong password for this instructor
                               </p>
                             </div>
@@ -2826,19 +3048,19 @@ export default function App() {
                           </button>
                         </div>
 
-                        <div className="p-6 space-y-4">
+                        <div className="p-5 sm:p-6 space-y-4">
                           <div className="flex items-center gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
                             <div className="w-10 h-10 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shrink-0">
                               {getInitials(adminResetFaculty.full_name)}
                             </div>
                             <div className="overflow-hidden">
-                              <h4 className="font-bold text-slate-900 text-sm truncate">
+                              <h4 className="font-bold text-slate-900 text-sm sm:text-base truncate">
                                 {adminResetFaculty.full_name}
                               </h4>
                               <p className="text-xs text-slate-500 font-mono truncate">
                                 {adminResetFaculty.email}
                               </p>
-                              <span className="inline-block mt-0.5 text-[10px] font-bold uppercase px-2 py-0.2 rounded bg-indigo-50 text-indigo-700">
+                              <span className="inline-block mt-0.5 text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">
                                 {adminResetFaculty.department} • {adminResetFaculty.role}
                               </span>
                             </div>
@@ -2846,7 +3068,7 @@ export default function App() {
 
                           {adminResetMsg.text && (
                             <div
-                              className={`p-3 rounded-lg text-xs font-medium flex items-start gap-2 ${
+                              className={`p-3 rounded-lg text-xs sm:text-sm font-medium flex items-start gap-2 ${
                                 adminResetMsg.type === 'error'
                                   ? 'bg-red-50 text-red-700 border border-red-200'
                                   : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
@@ -2863,9 +3085,7 @@ export default function App() {
 
                           <form onSubmit={handleAdminResetFacultyPassword} className="space-y-4">
                             <div>
-                              <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                                New Strong Password
-                              </label>
+                              <label className={UI_TEXT.label}>New Strong Password</label>
                               <div className="relative">
                                 <input
                                   type={showAdminResetPass ? 'text' : 'password'}
@@ -2892,9 +3112,7 @@ export default function App() {
                             </div>
 
                             <div>
-                              <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                                Confirm New Password
-                              </label>
+                              <label className={UI_TEXT.label}>Confirm New Password</label>
                               <div className="relative">
                                 <input
                                   type={showAdminResetConfirmPass ? 'text' : 'password'}
@@ -2931,7 +3149,7 @@ export default function App() {
                               currentPassword={adminResetFaculty.password}
                             />
 
-                            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                            <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 pt-2 border-t border-slate-100">
                               <button
                                 type="button"
                                 onClick={() => {
@@ -2940,7 +3158,7 @@ export default function App() {
                                   setAdminConfirmPass('');
                                   setAdminResetMsg({ type: '', text: '' });
                                 }}
-                                className="px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition"
+                                className="w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold transition"
                               >
                                 Cancel
                               </button>
@@ -2952,7 +3170,7 @@ export default function App() {
                                   adminNewPass !== adminConfirmPass ||
                                   adminNewPass === adminResetFaculty.password
                                 }
-                                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-semibold transition"
+                                className="w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs sm:text-sm font-semibold transition"
                               >
                                 {savingAdminReset ? 'Saving Password...' : 'Save New Password'}
                               </button>
@@ -2964,29 +3182,26 @@ export default function App() {
                   )}
                 </>
               ) : (
-                // ================= TAB 1: INSTRUCTOR CLASS RECORDS (WITH SCHOOL YEAR, TERM & BREAKDOWN VISIBILITY CONTROLS) =================
+                // ================= TAB 1: INSTRUCTOR CLASS RECORDS (UNIFIED TYPOGRAPHY & RESPONSIVE) =================
                 <>
-                  {/* Academic Period / Semester Tabs Bar */}
-                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-                      <div className="flex items-center gap-2.5">
-                        <Calendar className="w-5 h-5 text-indigo-600" />
-                        <div>
-                          <h2 className="text-sm font-bold text-slate-900">
-                            Academic School Year & Term Tabs
-                          </h2>
-                          <p className="text-xs text-slate-500">
-                            Switch between semesters anytime. Previous school years and terms remain safely stored.
-                          </p>
-                        </div>
+                  {/* Card 1: Academic Period / Semester Tabs Bar */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+                      <div>
+                        <h2 className={UI_TEXT.cardTitle}>
+                          Academic School Year & Term Tabs
+                        </h2>
+                        <p className={UI_TEXT.cardSubtitle}>
+                          Switch between semesters anytime. Previous school years and terms remain safely stored.
+                        </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => setShowNewPeriodModal(true)}
-                        className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center gap-1.5 border border-indigo-200 transition self-start sm:self-auto"
+                        className="w-full sm:w-auto justify-center px-4 py-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs sm:text-sm font-semibold flex items-center gap-1.5 border border-indigo-200 shrink-0 transition"
                       >
-                        <Plus className="w-4 h-4" />
-                        New School Year / Term
+                        <Plus className="w-4 h-4 shrink-0" />
+                        <span>New School Year / Term</span>
                       </button>
                     </div>
 
@@ -3002,18 +3217,17 @@ export default function App() {
                               setFilterSubject('ALL');
                               setFilterSection('ALL');
                             }}
-                            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition ${
+                            className={`flex-1 sm:flex-none justify-center px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 border transition ${
                               isActive
                                 ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
                                 : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                             }`}
                           >
-                            <FolderOpen className="w-3.5 h-3.5" />
-                            <span>
+                            <span className="truncate">
                               SY {period.school_year} • {period.term}
                             </span>
                             <span
-                              className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0 ${
                                 isActive
                                   ? 'bg-indigo-800 text-indigo-100'
                                   : 'bg-slate-200 text-slate-700'
@@ -3032,7 +3246,7 @@ export default function App() {
                           setFilterSubject('ALL');
                           setFilterSection('ALL');
                         }}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition ${
+                        className={`flex-1 sm:flex-none justify-center px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 border transition ${
                           activePeriodKey === 'ALL'
                             ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
                             : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -3043,43 +3257,44 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Bulk CSV Upload Card */}
-                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                  {/* Card 2: Bulk CSV Upload Card */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6">
                     <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                       <div>
-                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 mb-1.5">
-                          <Calendar className="w-3 h-3" />
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 mb-2">
                           Target Upload Period: SY {activeSyLabel} • {activeTermLabel}
                         </div>
-                        <h2 className="text-lg font-bold text-slate-900">
+                        <h2 className={UI_TEXT.cardTitle}>
                           Bulk CSV Upload — {currentInstructor.full_name}
                         </h2>
-                        <p className="text-sm text-slate-500">
+                        <p className={UI_TEXT.cardSubtitle}>
                           Uploaded records default to <strong>Breakdown: Hidden</strong> until you reveal them below.
                         </p>
                       </div>
-                      <div className="flex flex-wrap gap-3">
+                      <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 shrink-0">
                         <button
                           onClick={downloadTemplate}
-                          className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium"
+                          className="w-full sm:w-auto justify-center flex items-center gap-2 px-4 py-2.5 sm:py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-xs sm:text-sm font-semibold text-slate-700 transition"
                         >
-                          <Download className="w-4 h-4" /> Download CSV Template
+                          <Download className="w-4 h-4 shrink-0" />
+                          <span>Download CSV Template</span>
                         </button>
-                        <label className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium cursor-pointer">
-                          <Upload className="w-4 h-4" /> Upload CSV to {activeTermLabel}
+                        <label className="w-full sm:w-auto justify-center flex items-center gap-2 px-4 py-2.5 sm:py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold cursor-pointer transition">
+                          <Upload className="w-4 h-4 shrink-0" />
+                          <span>Upload CSV to {activeTermLabel}</span>
                           <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
                         </label>
                       </div>
                     </div>
                     {uploadStatus && (
-                      <div className="mt-4 p-3 rounded-lg bg-indigo-50 text-indigo-900 text-sm font-medium flex items-center justify-between">
+                      <div className="mt-4 p-3 rounded-lg bg-indigo-50 text-indigo-900 text-xs sm:text-sm font-medium flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
                           <span>{uploadStatus}</span>
                         </div>
                         <button
                           onClick={() => setUploadStatus('')}
-                          className="text-xs text-indigo-500 hover:text-indigo-800"
+                          className="text-xs font-semibold text-indigo-600 hover:text-indigo-900 shrink-0"
                         >
                           Dismiss
                         </button>
@@ -3087,10 +3302,19 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Master Class Table + Breakdown Visibility Control Bar */}
-                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                    {/* Search & Subject/Section Filter Row */}
-                    <div className="flex flex-col sm:flex-row gap-3 justify-between mb-4">
+                  {/* Card 3: Master Class Records Card */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6">
+                    <div className="mb-4">
+                      <h2 className={UI_TEXT.cardTitle}>
+                        Class Records & Grade Breakdown
+                      </h2>
+                      <p className={UI_TEXT.cardSubtitle}>
+                        Manage student grades, resend secret PINs via Gmail, and control grade breakdown visibility.
+                      </p>
+                    </div>
+
+                    {/* Responsive Search & Filter Controls */}
+                    <div className="flex flex-col md:flex-row gap-3 justify-between mb-4">
                       <div className="relative flex-1">
                         <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                         <input
@@ -3098,14 +3322,14 @@ export default function App() {
                           placeholder="Search students in this term by Name, ID, or Gmail..."
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
-                          className="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-300 text-sm"
+                          className="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                         />
                       </div>
-                      <div className="flex gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:flex gap-2.5 sm:gap-3">
                         <select
                           value={filterSubject}
                           onChange={(e) => setFilterSubject(e.target.value)}
-                          className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
+                          className="w-full md:w-auto px-3 py-2 rounded-lg border border-slate-300 text-xs sm:text-sm bg-white"
                         >
                           {subjects.map((sub) => (
                             <option key={sub} value={sub}>
@@ -3116,7 +3340,7 @@ export default function App() {
                         <select
                           value={filterSection}
                           onChange={(e) => setFilterSection(e.target.value)}
-                          className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
+                          className="w-full md:w-auto px-3 py-2 rounded-lg border border-slate-300 text-xs sm:text-sm bg-white"
                         >
                           {sections.map((sec) => (
                             <option key={sec} value={sec}>
@@ -3127,29 +3351,20 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* BREAKDOWN VISIBILITY CONTROL BAR (By Section & By Entire Student List) */}
-                    <div className="mb-6 p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                      <div className="flex items-start gap-2.5">
-                        <Layers className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                              Grade Breakdown Visibility Controls
-                            </h3>
-                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 text-indigo-800">
-                              {visibleBreakdownCount} of {periodFilteredRecords.length} Visible
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            Default is <strong>Hidden</strong>. Toggle breakdown visibility for all students, by section, or click any student's badge below.
-                          </p>
-                        </div>
+                    {/* BREAKDOWN VISIBILITY CONTROL BAR (Stacked Layout Without Helper Text) */}
+                    <div className="mb-6 p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className={UI_TEXT.subSectionTitle}>
+                          Grade Breakdown Visibility Controls
+                        </h3>
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">
+                          {visibleBreakdownCount} of {periodFilteredRecords.length} Visible
+                        </span>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
-                        {/* By Section Controls (Active when a specific section is selected, or quick section selector) */}
                         {filterSection !== 'ALL' ? (
-                          <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-indigo-200 shadow-sm">
+                          <div className="flex flex-wrap items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-indigo-200 shadow-sm w-full sm:w-auto">
                             <span className="text-xs font-bold text-indigo-900 mr-1">
                               Section {filterSection}:
                             </span>
@@ -3157,7 +3372,7 @@ export default function App() {
                               type="button"
                               disabled={updatingBreakdown}
                               onClick={() => handleSetSectionBreakdownVisibility(filterSection, true)}
-                              className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 transition"
+                              className="flex-1 sm:flex-none justify-center px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 transition"
                             >
                               <Eye className="w-3.5 h-3.5" />
                               Show Section
@@ -3166,7 +3381,7 @@ export default function App() {
                               type="button"
                               disabled={updatingBreakdown}
                               onClick={() => handleSetSectionBreakdownVisibility(filterSection, false)}
-                              className="px-2.5 py-1 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-semibold flex items-center gap-1 transition"
+                              className="flex-1 sm:flex-none justify-center px-2.5 py-1 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-semibold flex items-center gap-1 transition"
                             >
                               <EyeOff className="w-3.5 h-3.5" />
                               Hide Section
@@ -3176,62 +3391,383 @@ export default function App() {
                           sections.filter((s) => s !== 'ALL').map((sec) => (
                             <div
                               key={sec}
-                              className="flex items-center gap-1 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200"
+                              className="flex items-center justify-between sm:justify-start gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-slate-200 w-full sm:w-auto"
                             >
                               <span className="text-xs font-bold text-slate-700 mr-1">{sec}:</span>
-                              <button
-                                type="button"
-                                disabled={updatingBreakdown}
-                                onClick={() => handleSetSectionBreakdownVisibility(sec, true)}
-                                className="px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-bold flex items-center gap-1 transition"
-                                title={`Show breakdown for all students in ${sec}`}
-                              >
-                                <Eye className="w-3 h-3" />
-                                Show
-                              </button>
-                              <button
-                                type="button"
-                                disabled={updatingBreakdown}
-                                onClick={() => handleSetSectionBreakdownVisibility(sec, false)}
-                                className="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold flex items-center gap-1 transition"
-                                title={`Hide breakdown for all students in ${sec}`}
-                              >
-                                <EyeOff className="w-3 h-3" />
-                                Hide
-                              </button>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={updatingBreakdown}
+                                  onClick={() => handleSetSectionBreakdownVisibility(sec, true)}
+                                  className="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold flex items-center gap-1 transition"
+                                  title={`Show breakdown for all students in ${sec}`}
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  Show
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={updatingBreakdown}
+                                  onClick={() => handleSetSectionBreakdownVisibility(sec, false)}
+                                  className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold flex items-center gap-1 transition"
+                                  title={`Hide breakdown for all students in ${sec}`}
+                                >
+                                  <EyeOff className="w-3.5 h-3.5" />
+                                  Hide
+                                </button>
+                              </div>
                             </div>
                           ))
                         )}
 
-                        {/* Entire Student List Controls */}
-                        <div className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-1.5 rounded-lg">
+                        <div className="flex items-center justify-between sm:justify-start gap-1.5 bg-slate-900 text-white px-3 py-1.5 rounded-lg w-full sm:w-auto">
                           <span className="text-xs font-bold text-slate-300 mr-1">All Students:</span>
-                          <button
-                            type="button"
-                            disabled={updatingBreakdown || periodFilteredRecords.length === 0}
-                            onClick={() => handleSetAllStudentsBreakdownVisibility(true)}
-                            className="px-2.5 py-1 rounded bg-emerald-500 hover:bg-emerald-600 text-slate-950 text-xs font-extrabold flex items-center gap-1 transition"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            Show All
-                          </button>
-                          <button
-                            type="button"
-                            disabled={updatingBreakdown || periodFilteredRecords.length === 0}
-                            onClick={() => handleSetAllStudentsBreakdownVisibility(false)}
-                            className="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold flex items-center gap-1 transition"
-                          >
-                            <EyeOff className="w-3.5 h-3.5" />
-                            Hide All
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={updatingBreakdown || periodFilteredRecords.length === 0}
+                              onClick={() => handleSetAllStudentsBreakdownVisibility(true)}
+                              className="px-2.5 py-1 rounded bg-emerald-500 hover:bg-emerald-600 text-slate-950 text-xs font-bold flex items-center gap-1 transition"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              Show All
+                            </button>
+                            <button
+                              type="button"
+                              disabled={updatingBreakdown || periodFilteredRecords.length === 0}
+                              onClick={() => handleSetAllStudentsBreakdownVisibility(false)}
+                              className="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold flex items-center gap-1 transition"
+                            >
+                              <EyeOff className="w-3.5 h-3.5" />
+                              Hide All
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
 
-                    <div className="overflow-x-auto">
+                    {/* ADAPTIVE VIEW 1: MOBILE & TABLET STUDENT CARDS (< md) */}
+                    <div className="md:hidden space-y-3">
+                      {loadingTeacher ? (
+                        <div className="py-8 text-center text-slate-400 text-sm">
+                          Loading your class records...
+                        </div>
+                      ) : filteredRecords.length === 0 ? (
+                        <div className="py-8 text-center text-slate-400 text-sm">
+                          {activePeriodKey === 'ALL'
+                            ? 'No student records found under your account. Upload a CSV file to get started.'
+                            : `No student records uploaded for SY ${activeSyLabel} • ${activeTermLabel} yet.`}
+                        </div>
+                      ) : (
+                        filteredRecords.map((rec) => {
+                          const isEditing = editingId === rec.id;
+                          const isBreakdownVisible = Boolean(rec.show_breakdown);
+
+                          return (
+                            <div
+                              key={rec.id}
+                              className={`p-4 rounded-xl border transition ${
+                                isEditing
+                                  ? 'bg-indigo-50/70 border-indigo-300'
+                                  : 'bg-white border-slate-200 shadow-2xs'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2 mb-3">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                                    <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">
+                                      {rec.student_id}
+                                    </span>
+                                    <span className="text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                                      {rec.section}
+                                    </span>
+                                    <span className="text-xs font-medium text-slate-500">
+                                      {rec.school_year || DEFAULT_SCHOOL_YEAR} • {rec.term || DEFAULT_TERM}
+                                    </span>
+                                  </div>
+                                  <h4 className="font-bold text-slate-900 text-sm sm:text-base leading-snug">
+                                    {rec.full_name}
+                                  </h4>
+                                  <p className="text-xs text-slate-500 truncate">{rec.subject}</p>
+                                </div>
+
+                                {!isEditing && (
+                                  <span
+                                    className={`shrink-0 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                                      rec.remarks === 'Passed'
+                                        ? 'bg-emerald-50 text-emerald-700'
+                                        : rec.remarks === 'Conditional' || rec.remarks === 'INC'
+                                        ? 'bg-amber-50 text-amber-700'
+                                        : 'bg-red-50 text-red-700'
+                                    }`}
+                                  >
+                                    {rec.remarks}
+                                  </span>
+                                )}
+                              </div>
+
+                              {isEditing ? (
+                                <div className="space-y-3 pt-2 border-t border-indigo-200 text-xs">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="block font-semibold text-slate-600 mb-1">
+                                        School Year
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={editForm.school_year}
+                                        onChange={(e) =>
+                                          setEditForm({ ...editForm, school_year: e.target.value })
+                                        }
+                                        className="w-full px-2.5 py-1.5 rounded border border-indigo-300 bg-white"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block font-semibold text-slate-600 mb-1">
+                                        Term
+                                      </label>
+                                      <select
+                                        value={editForm.term}
+                                        onChange={(e) =>
+                                          setEditForm({ ...editForm, term: e.target.value })
+                                        }
+                                        className="w-full px-2 py-1.5 rounded border border-indigo-300 bg-white"
+                                      >
+                                        <option value="1st Term">1st Term</option>
+                                        <option value="2nd Term">2nd Term</option>
+                                        <option value="Midyear / Summer">Midyear / Summer</option>
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="block font-semibold text-slate-600 mb-1">
+                                        Midterm Grade
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={editForm.midterm_grade}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setEditForm({
+                                            ...editForm,
+                                            midterm_grade: val,
+                                            remarks: computeRemarksFromGrade(val, editForm.remarks),
+                                          });
+                                        }}
+                                        className="w-full px-2.5 py-1.5 rounded border border-indigo-400 bg-white font-bold text-indigo-900"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block font-semibold text-slate-600 mb-1">
+                                        Final Grade
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={editForm.final_grade}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setEditForm({
+                                            ...editForm,
+                                            final_grade: val,
+                                            remarks: computeRemarksFromGrade(val, editForm.remarks),
+                                          });
+                                        }}
+                                        className="w-full px-2.5 py-1.5 rounded border border-indigo-400 bg-white font-bold text-indigo-950"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="block font-semibold text-slate-600 mb-1">
+                                        Secret PIN
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={editForm.pin}
+                                        onChange={(e) =>
+                                          setEditForm({ ...editForm, pin: e.target.value })
+                                        }
+                                        className="w-full px-2.5 py-1.5 rounded border border-indigo-300 bg-white font-mono"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block font-semibold text-slate-600 mb-1">
+                                        Remarks
+                                      </label>
+                                      <select
+                                        value={editForm.remarks}
+                                        onChange={(e) =>
+                                          setEditForm({ ...editForm, remarks: e.target.value })
+                                        }
+                                        className="w-full px-2 py-1.5 rounded border border-indigo-300 bg-white font-medium"
+                                      >
+                                        <option value="Passed">Passed</option>
+                                        <option value="Conditional">Conditional</option>
+                                        <option value="INC">INC</option>
+                                        <option value="Failed">Failed</option>
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <label className="block font-semibold text-slate-600 mb-1">
+                                      Registered Gmail (Clear to reset)
+                                    </label>
+                                    <input
+                                      type="email"
+                                      value={editForm.email}
+                                      onChange={(e) =>
+                                        setEditForm({ ...editForm, email: e.target.value })
+                                      }
+                                      placeholder="Not registered yet"
+                                      className="w-full px-2.5 py-1.5 rounded border border-indigo-300 bg-white"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label className="block font-semibold text-slate-600 mb-1">
+                                      Breakdown
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={editForm.breakdown}
+                                      onChange={(e) =>
+                                        setEditForm({ ...editForm, breakdown: e.target.value })
+                                      }
+                                      className="w-full px-2.5 py-1.5 rounded border border-indigo-300 bg-white"
+                                    />
+                                  </div>
+
+                                  <div className="flex items-center justify-end gap-2 pt-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingId(null)}
+                                      className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveEdit(rec.id)}
+                                      disabled={savingEdit}
+                                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold flex items-center gap-1"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                      Save
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="grid grid-cols-3 gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100 mb-2.5 text-center">
+                                    <div>
+                                      <span className="block text-[11px] uppercase text-slate-400 font-semibold">
+                                        Midterm
+                                      </span>
+                                      <span className="text-sm font-extrabold text-indigo-700">
+                                        {rec.midterm_grade}
+                                      </span>
+                                    </div>
+                                    <div className="border-x border-slate-200">
+                                      <span className="block text-[11px] uppercase text-slate-400 font-semibold">
+                                        Final
+                                      </span>
+                                      <span className="text-sm font-extrabold text-indigo-950">
+                                        {rec.final_grade || 'Pending'}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="block text-[11px] uppercase text-slate-400 font-semibold">
+                                        PIN
+                                      </span>
+                                      <span className="text-xs font-mono font-bold text-slate-700">
+                                        {rec.pin}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="text-xs text-slate-600 space-y-1 mb-3">
+                                    <div className="truncate">
+                                      <span className="text-slate-400">Gmail: </span>
+                                      {rec.email ? (
+                                        <span className="text-emerald-700 font-medium">{rec.email}</span>
+                                      ) : (
+                                        <span className="italic text-slate-400">Not registered</span>
+                                      )}
+                                    </div>
+                                    {rec.breakdown && (
+                                      <div className="text-xs text-slate-500 line-clamp-2 bg-slate-50 p-2 rounded border border-slate-100">
+                                        <strong className="text-slate-700">Breakdown:</strong> {rec.breakdown}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center justify-between pt-2.5 border-t border-slate-100">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleSingleBreakdown(rec)}
+                                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${
+                                        isBreakdownVisible
+                                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                          : 'bg-slate-50 text-slate-500 border-slate-200'
+                                      }`}
+                                    >
+                                      {isBreakdownVisible ? (
+                                        <>
+                                          <Eye className="w-3.5 h-3.5" /> Breakdown Visible
+                                        </>
+                                      ) : (
+                                        <>
+                                          <EyeOff className="w-3.5 h-3.5" /> Breakdown Hidden
+                                        </>
+                                      )}
+                                    </button>
+
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        onClick={() => handleSendSinglePin(rec)}
+                                        disabled={sendingEmailId === rec.id || !rec.email}
+                                        className={`p-2 rounded-lg transition ${
+                                          rec.email
+                                            ? 'text-emerald-600 hover:bg-emerald-50'
+                                            : 'text-slate-300 cursor-not-allowed'
+                                        }`}
+                                        title="Resend PIN to Gmail"
+                                      >
+                                        <Mail className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => startEdit(rec)}
+                                        className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                                        title="Edit Student"
+                                      >
+                                        <Pencil className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteRecord(rec.id)}
+                                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                                        title="Delete Record"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* ADAPTIVE VIEW 2: DESKTOP TABLE VIEW (md and up) */}
+                    <div className="hidden md:block overflow-x-auto">
                       <table className="w-full text-left border-collapse text-sm">
                         <thead>
-                          <tr className="border-b border-slate-200 text-slate-500 uppercase text-xs">
+                          <tr className="border-b border-slate-200 text-slate-500 uppercase text-xs font-bold tracking-wider">
                             <th className="py-3 px-3">SY / Term</th>
                             <th className="py-3 px-3">Student ID</th>
                             <th className="py-3 px-3">Full Name</th>
@@ -3241,7 +3777,7 @@ export default function App() {
                             <th className="py-3 px-3">Section</th>
                             <th className="py-3 px-3">Midterm</th>
                             <th className="py-3 px-3">Final</th>
-                            <th className="py-3 px-3">Breakdown & Visibility</th>
+                            <th className="py-3 px-3">Breakdown</th>
                             <th className="py-3 px-3">Remarks</th>
                             <th className="py-3 px-3 text-right">Action</th>
                           </tr>
@@ -3382,56 +3918,18 @@ export default function App() {
                                     )}
                                   </td>
 
-                                  {/* Breakdown Text + Individual Show/Hide Toggle Badge */}
                                   <td className="py-3 px-3 text-xs text-slate-500 max-w-xs">
                                     {isEditing ? (
-                                      <div className="space-y-1.5">
-                                        <input
-                                          type="text"
-                                          value={editForm.breakdown}
-                                          onChange={(e) => setEditForm({ ...editForm, breakdown: e.target.value })}
-                                          className="w-full min-w-[180px] px-2 py-1 rounded border border-indigo-300 bg-white text-xs text-slate-700"
-                                        />
-                                        <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
-                                          <input
-                                            type="checkbox"
-                                            checked={Boolean(editForm.show_breakdown)}
-                                            onChange={(e) =>
-                                              setEditForm({ ...editForm, show_breakdown: e.target.checked })
-                                            }
-                                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                                          />
-                                          Show Breakdown to Student
-                                        </label>
-                                      </div>
+                                      <input
+                                        type="text"
+                                        value={editForm.breakdown}
+                                        onChange={(e) => setEditForm({ ...editForm, breakdown: e.target.value })}
+                                        className="w-full min-w-[180px] px-2 py-1 rounded border border-indigo-300 bg-white text-xs text-slate-700"
+                                      />
                                     ) : (
-                                      <div className="flex flex-col items-start gap-1">
-                                        <button
-                                          type="button"
-                                          onClick={() => handleToggleSingleBreakdown(rec)}
-                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border transition ${
-                                            isBreakdownVisible
-                                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                                              : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
-                                          }`}
-                                          title="Click to toggle breakdown visibility for this student"
-                                        >
-                                          {isBreakdownVisible ? (
-                                            <>
-                                              <Eye className="w-3 h-3 text-emerald-600" />
-                                              Visible to Student
-                                            </>
-                                          ) : (
-                                            <>
-                                              <EyeOff className="w-3 h-3 text-slate-400" />
-                                              Hidden (Default)
-                                            </>
-                                          )}
-                                        </button>
-                                        <span className="line-clamp-1 text-[11px]" title={rec.breakdown}>
-                                          {rec.breakdown || '—'}
-                                        </span>
-                                      </div>
+                                      <span className="line-clamp-1" title={rec.breakdown}>
+                                        {rec.breakdown || '—'}
+                                      </span>
                                     )}
                                   </td>
 
@@ -3543,21 +4041,21 @@ export default function App() {
                   {/* CENTERED MODAL FOR CREATING A NEW SCHOOL YEAR & TERM TAB */}
                   {showNewPeriodModal && (
                     <div
-                      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+                      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-3 sm:p-4"
                       onClick={() => setShowNewPeriodModal(false)}
                     >
                       <div
-                        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+                        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+                        <div className="bg-slate-900 text-white px-5 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
                           <div className="flex items-center gap-2.5">
                             <Calendar className="w-5 h-5 text-amber-400 shrink-0" />
                             <div>
-                              <h3 className="font-bold text-sm leading-tight">
+                              <h3 className={UI_TEXT.modalTitle}>
                                 Add New School Year & Term Tab
                               </h3>
-                              <p className="text-[11px] text-slate-400">
+                              <p className={UI_TEXT.modalSubtitle}>
                                 Create a workspace for an upcoming semester
                               </p>
                             </div>
@@ -3571,11 +4069,9 @@ export default function App() {
                           </button>
                         </div>
 
-                        <form onSubmit={handleCreateNewAcademicPeriod} className="p-6 space-y-4">
+                        <form onSubmit={handleCreateNewAcademicPeriod} className="p-5 sm:p-6 space-y-4">
                           <div>
-                            <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                              School Year
-                            </label>
+                            <label className={UI_TEXT.label}>School Year</label>
                             <input
                               type="text"
                               required
@@ -3587,9 +4083,7 @@ export default function App() {
                           </div>
 
                           <div>
-                            <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                              Academic Term / Semester
-                            </label>
+                            <label className={UI_TEXT.label}>Academic Term / Semester</label>
                             <select
                               value={newTermInput}
                               onChange={(e) => setNewTermInput(e.target.value)}
@@ -3601,7 +4095,7 @@ export default function App() {
                             </select>
                           </div>
 
-                          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-600">
                             Creating this tab switches your active view to{' '}
                             <strong className="text-indigo-700">
                               SY {newSchoolYearInput.trim() || DEFAULT_SCHOOL_YEAR} • {newTermInput}
@@ -3609,17 +4103,17 @@ export default function App() {
                             . All grades from your previous semesters remain intact in their own tabs.
                           </div>
 
-                          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 pt-2 border-t border-slate-100">
                             <button
                               type="button"
                               onClick={() => setShowNewPeriodModal(false)}
-                              className="px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition"
+                              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold transition"
                             >
                               Cancel
                             </button>
                             <button
                               type="submit"
-                              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition"
+                              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold transition"
                             >
                               Create & Switch to Term
                             </button>
@@ -3641,22 +4135,24 @@ export default function App() {
   // SEPARATE PAGE 2: STUDENT PORTAL (Default Page at /)
   // ============================================================================
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
-      <header className="bg-indigo-950 text-white shadow-md">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <GraduationCap className="w-8 h-8 text-amber-400" />
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col">
+      <header className="bg-indigo-950 text-white shadow-md sticky top-0 z-30">
+        <div className="max-w-5xl mx-auto px-4 py-3.5 sm:py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <GraduationCap className="w-7 h-7 sm:w-8 sm:h-8 text-amber-400 shrink-0" />
             <div>
-              <h1 className="font-bold text-lg leading-tight">University Grade Portal</h1>
-              <p className="text-xs text-indigo-200">Official Student Grade Inquiry</p>
+              <h1 className={UI_TEXT.pageTitle}>University Grade Portal</h1>
+              <p className="text-[11px] sm:text-xs text-indigo-200">
+                Official Student Grade Inquiry
+              </p>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-8">
+      <main className="max-w-5xl w-full mx-auto px-3 sm:px-4 py-6 sm:py-8 flex-1">
         {!studentRecords ? (
-          <div className="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-6">
+          <div className="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-2 sm:mt-6">
             <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50">
               <button
                 type="button"
@@ -3664,14 +4160,14 @@ export default function App() {
                   setStudentTab('login');
                   setStudentError('');
                 }}
-                className={`py-3.5 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 border-b-2 transition ${
+                className={`py-3.5 px-2 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 border-b-2 transition ${
                   studentTab === 'login'
                     ? 'border-indigo-600 text-indigo-900 bg-white'
                     : 'border-transparent text-slate-500 hover:text-slate-700'
                 }`}
               >
-                <KeyRound className="w-4 h-4" />
-                1. View Grades
+                <KeyRound className="w-4 h-4 shrink-0" />
+                <span>1. View Grades</span>
               </button>
               <button
                 type="button"
@@ -3680,27 +4176,27 @@ export default function App() {
                   setStudentError('');
                   setStudentSuccess('');
                 }}
-                className={`py-3.5 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 border-b-2 transition ${
+                className={`py-3.5 px-2 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 border-b-2 transition ${
                   studentTab === 'register'
                     ? 'border-indigo-600 text-indigo-900 bg-white'
                     : 'border-transparent text-slate-500 hover:text-slate-700'
                 }`}
               >
-                <Mail className="w-4 h-4" />
-                2. Register Gmail / PIN
+                <Mail className="w-4 h-4 shrink-0" />
+                <span>2. Register Gmail</span>
               </button>
             </div>
 
-            <div className="p-6 sm:p-8">
+            <div className="p-5 sm:p-8">
               {studentError && (
-                <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-start gap-2">
+                <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs sm:text-sm flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>{studentError}</span>
                 </div>
               )}
 
               {studentSuccess && (
-                <div className="mb-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-start gap-2">
+                <div className="mb-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start gap-2">
                   <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
                   <span>{studentSuccess}</span>
                 </div>
@@ -3708,33 +4204,29 @@ export default function App() {
 
               {studentTab === 'login' ? (
                 <>
-                  <div className="flex items-center gap-2 text-indigo-900 font-semibold text-xl mb-1">
-                    <Lock className="w-5 h-5 text-indigo-600" />
-                    Student Grade Login
+                  <div className="flex items-center gap-2 text-indigo-900 font-bold text-lg sm:text-xl mb-1">
+                    <Lock className="w-5 h-5 text-indigo-600 shrink-0" />
+                    <span>Student Grade Login</span>
                   </div>
-                  <p className="text-sm text-slate-500 mb-6">
+                  <p className={UI_TEXT.authSubtitle}>
                     Enter your Student ID and the PIN sent to your Gmail.
                   </p>
 
                   <form onSubmit={handleStudentLogin} className="space-y-4">
                     <div>
-                      <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                        Student ID Number
-                      </label>
+                      <label className={UI_TEXT.label}>Student ID Number</label>
                       <input
                         type="text"
                         required
                         placeholder="e.g., 26-20437"
                         value={studentIdInput}
                         onChange={(e) => setStudentIdInput(e.target.value)}
-                        className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                        Secret PIN
-                      </label>
+                      <label className={UI_TEXT.label}>Secret PIN</label>
                       <div className="relative">
                         <input
                           type={showPin ? 'text' : 'password'}
@@ -3742,7 +4234,7 @@ export default function App() {
                           placeholder="Enter your 4-digit PIN"
                           value={pinInput}
                           onChange={(e) => setPinInput(e.target.value)}
-                          className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                         />
                         <button
                           type="button"
@@ -3757,7 +4249,7 @@ export default function App() {
                     <button
                       type="submit"
                       disabled={loadingStudent}
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition"
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
                     >
                       {loadingStudent ? 'Checking Records...' : 'View My Grades'}
                     </button>
@@ -3779,50 +4271,48 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <div className="flex items-center gap-2 text-indigo-900 font-semibold text-xl mb-1">
-                    <UserCheck className="w-5 h-5 text-indigo-600" />
-                    Register Your Gmail
+                  <div className="flex items-center gap-2 text-indigo-900 font-bold text-lg sm:text-xl mb-1">
+                    <UserCheck className="w-5 h-5 text-indigo-600 shrink-0" />
+                    <span>Register Your Gmail</span>
                   </div>
-                  <p className="text-sm text-slate-500 mb-6">
+                  <p className={UI_TEXT.authSubtitle}>
                     Enter your Student ID and personal Gmail address. Your secret PIN will be emailed to you immediately.
                   </p>
 
                   <form onSubmit={handleStudentRegisterGmail} className="space-y-4">
                     <div>
-                      <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                        Your Student ID Number
-                      </label>
+                      <label className={UI_TEXT.label}>Your Student ID Number</label>
                       <input
                         type="text"
                         required
                         placeholder="e.g., 26-20437"
                         value={regStudentId}
                         onChange={(e) => setRegStudentId(e.target.value)}
-                        className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                        Your Personal Gmail Address
-                      </label>
+                      <label className={UI_TEXT.label}>Your Personal Gmail Address</label>
                       <input
                         type="email"
                         required
                         placeholder="yourname@gmail.com"
                         value={regGmail}
                         onChange={(e) => setRegGmail(e.target.value)}
-                        className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
                       />
                     </div>
 
                     <button
                       type="submit"
                       disabled={sendingStudentPin}
-                      className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg transition"
+                      className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
                     >
-                      <Send className="w-4 h-4" />
-                      {sendingStudentPin ? 'Saving Gmail & Sending PIN...' : 'Register Gmail & Email My PIN'}
+                      <Send className="w-4 h-4 shrink-0" />
+                      <span>
+                        {sendingStudentPin ? 'Saving Gmail & Sending PIN...' : 'Register Gmail & Email My PIN'}
+                      </span>
                     </button>
                   </form>
                 </>
@@ -3831,24 +4321,28 @@ export default function App() {
           </div>
         ) : (
           <div className="max-w-3xl mx-auto">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <span className="text-xs font-semibold uppercase tracking-wider text-indigo-600">
+            {/* Student Header Card */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6 mb-5 sm:mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 block mb-0.5">
                   Official Academic Record
                 </span>
-                <h2 className="text-2xl font-bold text-slate-900">{studentRecords[0].full_name}</h2>
-                <p className="text-sm text-slate-500">
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 truncate">
+                  {studentRecords[0].full_name}
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-500 break-all mt-0.5">
                   Student ID: {studentRecords[0].student_id}
                   {studentRecords[0].email ? ` • ${studentRecords[0].email}` : ''}
                 </p>
               </div>
               <button
                 onClick={() => {
+                  sessionStorage.removeItem(ACTIVE_STUDENT_SESSION_KEY);
                   setStudentRecords(null);
                   setStudentIdInput('');
                   setPinInput('');
                 }}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium self-start sm:self-auto"
+                className="w-full sm:w-auto justify-center flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-semibold shrink-0 transition"
               >
                 <LogOut className="w-4 h-4" /> Sign Out
               </button>
@@ -3860,7 +4354,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setStudentPeriodFilter('ALL')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition ${
+                  className={`flex-1 sm:flex-none justify-center px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition ${
                     studentPeriodFilter === 'ALL'
                       ? 'bg-indigo-950 text-white border-indigo-950'
                       : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
@@ -3873,41 +4367,42 @@ export default function App() {
                     key={p.key}
                     type="button"
                     onClick={() => setStudentPeriodFilter(p.key)}
-                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition ${
+                    className={`flex-1 sm:flex-none justify-center px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border flex items-center gap-1.5 transition ${
                       studentPeriodFilter === p.key
                         ? 'bg-indigo-600 text-white border-indigo-600'
                         : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
                     }`}
                   >
-                    <Calendar className="w-3.5 h-3.5" />
-                    SY {p.label}
+                    <Calendar className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">SY {p.label}</span>
                   </button>
                 ))}
               </div>
             )}
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            {/* Student Grade Cards Grid */}
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
               {visibleStudentRecords.map((rec) => (
-                <div key={rec.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
+                <div key={rec.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6">
+                  <div className="flex items-start justify-between gap-2 mb-4">
+                    <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
                         <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700">
                           {rec.section}
                         </span>
-                        <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700">
+                        <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
                           SY {rec.school_year || DEFAULT_SCHOOL_YEAR} • {rec.term || DEFAULT_TERM}
                         </span>
                       </div>
-                      <h3 className="font-bold text-lg text-slate-900">{rec.subject}</h3>
+                      <h3 className={UI_TEXT.cardTitle}>{rec.subject}</h3>
                       {rec.instructor_name && (
-                        <p className="text-xs text-slate-500 mt-0.5">
+                        <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
                           Instructor: <strong className="text-slate-700">{rec.instructor_name}</strong>
                         </p>
                       )}
                     </div>
                     <span
-                      className={`px-3 py-1 rounded-full text-xs font-bold border ${
+                      className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold border ${
                         rec.remarks === 'Passed'
                           ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                           : rec.remarks === 'Conditional' || rec.remarks === 'INC'
@@ -3921,12 +4416,18 @@ export default function App() {
 
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
-                      <span className="block text-xs font-medium text-slate-500 mb-1">Midterm Grade</span>
-                      <span className="text-2xl font-extrabold text-indigo-950">{rec.midterm_grade}</span>
+                      <span className="block text-xs font-medium text-slate-500 mb-1">
+                        Midterm Grade
+                      </span>
+                      <span className="text-xl sm:text-2xl font-extrabold text-indigo-950">
+                        {rec.midterm_grade}
+                      </span>
                     </div>
                     <div className="bg-indigo-50/50 rounded-xl p-3.5 border border-indigo-100">
-                      <span className="block text-xs font-medium text-indigo-600 mb-1">Final Grade</span>
-                      <span className="text-2xl font-extrabold text-indigo-900">
+                      <span className="block text-xs font-medium text-indigo-600 mb-1">
+                        Final Grade
+                      </span>
+                      <span className="text-xl sm:text-2xl font-extrabold text-indigo-900">
                         {rec.final_grade || 'Pending'}
                       </span>
                     </div>
@@ -3934,7 +4435,7 @@ export default function App() {
 
                   {/* ONLY DISPLAY BREAKDOWN IF INSTRUCTOR HAS ENABLED show_breakdown = true */}
                   {Boolean(rec.show_breakdown) && rec.breakdown && (
-                    <p className="text-xs text-slate-500 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100">
+                    <p className="text-xs sm:text-sm text-slate-500 bg-slate-50 px-3 py-2.5 rounded-lg border border-slate-100 wrap-break-word">
                       <strong>Breakdown:</strong> {rec.breakdown}
                     </p>
                   )}
