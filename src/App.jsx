@@ -5,7 +5,7 @@ import {
   LogOut, Eye, EyeOff, Trash2, CheckCircle2, AlertCircle, 
   Lock, Pencil, Check, X, Mail, Send, UserCheck, KeyRound, 
   ArrowLeft, UserPlus, Users, BookOpen, Clock, ChevronRight,
-  Settings, RefreshCw
+  Settings, RefreshCw, Calendar, Plus, FolderOpen, Layers
 } from 'lucide-react';
 
 // Initialize Supabase Client from your .env file
@@ -20,6 +20,10 @@ const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const SAVED_INSTRUCTORS_KEY = 'ugp_saved_instructors_v1';
+const CUSTOM_PERIODS_KEY_PREFIX = 'ugp_custom_periods_instructor_';
+
+const DEFAULT_SCHOOL_YEAR = '2026-2027';
+const DEFAULT_TERM = '1st Term';
 
 const checkIsTeacherRoute = () => {
   const path = window.location.pathname.toLowerCase();
@@ -111,6 +115,7 @@ export default function App() {
   const [pinInput, setPinInput] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [studentRecords, setStudentRecords] = useState(null);
+  const [studentPeriodFilter, setStudentPeriodFilter] = useState('ALL');
   const [studentError, setStudentError] = useState('');
   const [studentSuccess, setStudentSuccess] = useState('');
   const [loadingStudent, setLoadingStudent] = useState(false);
@@ -123,6 +128,13 @@ export default function App() {
   const [teacherAuthTab, setTeacherAuthTab] = useState('login'); // 'login' | 'signup' | 'forgot'
   const [currentInstructor, setCurrentInstructor] = useState(null);
   const [teacherViewTab, setTeacherViewTab] = useState('grades'); // 'grades' | 'faculty' | 'profile'
+
+  // ================= SCHOOL YEAR & TERM STATE =================
+  const [activePeriodKey, setActivePeriodKey] = useState(`${DEFAULT_SCHOOL_YEAR}|||${DEFAULT_TERM}`);
+  const [customPeriods, setCustomPeriods] = useState([]);
+  const [showNewPeriodModal, setShowNewPeriodModal] = useState(false);
+  const [newSchoolYearInput, setNewSchoolYearInput] = useState('2026-2027');
+  const [newTermInput, setNewTermInput] = useState('2nd Term');
 
   // Saved Instructor Accounts in Browser LocalStorage
   const [savedInstructors, setSavedInstructors] = useState(() => {
@@ -209,11 +221,14 @@ export default function App() {
           setAdminConfirmPass('');
           setAdminResetMsg({ type: '', text: '' });
         }
+        if (showNewPeriodModal) {
+          setShowNewPeriodModal(false);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showProfileVerify, adminResetFaculty]);
+  }, [showProfileVerify, adminResetFaculty, showNewPeriodModal]);
 
   // Instructor Signup Form (2 Independent Eye Toggles!)
   const [signupName, setSignupName] = useState('');
@@ -228,6 +243,7 @@ export default function App() {
   const [allRecords, setAllRecords] = useState([]);
   const [facultyList, setFacultyList] = useState([]);
   const [loadingTeacher, setLoadingTeacher] = useState(false);
+  const [updatingBreakdown, setUpdatingBreakdown] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
   const [filterSubject, setFilterSubject] = useState('ALL');
   const [filterSection, setFilterSection] = useState('ALL');
@@ -239,12 +255,54 @@ export default function App() {
   const [editForm, setEditForm] = useState({
     email: '',
     pin: '',
+    school_year: DEFAULT_SCHOOL_YEAR,
+    term: DEFAULT_TERM,
     midterm_grade: '',
     final_grade: '',
     breakdown: '',
+    show_breakdown: false,
     remarks: ''
   });
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // HELPER: Load & Save Custom Academic Periods for an Instructor
+  const loadInstructorCustomPeriods = (instructorId) => {
+    try {
+      const raw = localStorage.getItem(`${CUSTOM_PERIODS_KEY_PREFIX}${instructorId}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      setCustomPeriods(parsed);
+      return parsed;
+    } catch {
+      setCustomPeriods([]);
+      return [];
+    }
+  };
+
+  const handleCreateNewAcademicPeriod = (e) => {
+    e.preventDefault();
+    if (!currentInstructor) return;
+    const cleanSy = newSchoolYearInput.trim() || DEFAULT_SCHOOL_YEAR;
+    const cleanTerm = newTermInput.trim() || DEFAULT_TERM;
+    const newKey = `${cleanSy}|||${cleanTerm}`;
+
+    const exists = customPeriods.some((p) => `${p.school_year}|||${p.term}` === newKey);
+    if (!exists) {
+      const updated = [{ school_year: cleanSy, term: cleanTerm }, ...customPeriods];
+      setCustomPeriods(updated);
+      localStorage.setItem(
+        `${CUSTOM_PERIODS_KEY_PREFIX}${currentInstructor.id}`,
+        JSON.stringify(updated)
+      );
+    }
+
+    setActivePeriodKey(newKey);
+    setFilterSubject('ALL');
+    setFilterSection('ALL');
+    setShowNewPeriodModal(false);
+    setUploadStatus(
+      `Switched to ${cleanSy} • ${cleanTerm}. Any CSV you upload now will be saved under this semester!`
+    );
+  };
 
   // HELPER: Save Instructor Profile Card to LocalStorage
   const rememberInstructorOnDevice = (instructor) => {
@@ -323,7 +381,9 @@ export default function App() {
       .from('student_grades')
       .select('*')
       .eq('student_id', studentIdInput.trim())
-      .eq('pin', pinInput.trim());
+      .eq('pin', pinInput.trim())
+      .order('school_year', { ascending: false })
+      .order('term', { ascending: true });
 
     setLoadingStudent(false);
 
@@ -338,6 +398,7 @@ export default function App() {
     }
 
     setStudentRecords(data);
+    setStudentPeriodFilter('ALL');
   };
 
   const handleStudentRegisterGmail = async (e) => {
@@ -434,6 +495,7 @@ export default function App() {
     setInstructorPinInput('');
     setGeneratedLoginPin(null);
     setTeacherViewTab('grades');
+    loadInstructorCustomPeriods(instructorData.id);
     fetchInstructorRecords(instructorData);
     if (instructorData.role === 'admin') {
       fetchFacultyList();
@@ -887,7 +949,7 @@ export default function App() {
     setPasswordStatusMsg({ type: 'success', text: 'Your password has been changed successfully!' });
   };
 
-  // Super Admin: Direct Password Reset Modal Handler (With Confirm Password & Validation)
+  // Super Admin: Direct Password Reset Modal Handler
   const handleAdminResetFacultyPassword = async (e) => {
     e.preventDefault();
     if (!adminResetFaculty) return;
@@ -932,7 +994,6 @@ export default function App() {
         text: 'Failed to reset password: ' + error.message,
       });
     } else {
-      // If Super Admin reset their own password here, keep currentInstructor in sync
       if (currentInstructor && adminResetFaculty.id === currentInstructor.id) {
         setCurrentInstructor((prev) => ({ ...prev, password: adminNewPass }));
       }
@@ -947,7 +1008,7 @@ export default function App() {
     }
   };
 
-  // ================= 5. INSTRUCTOR SIGNUP (WITH STRONG PASSWORD & CONFIRMATION) =================
+  // ================= 5. INSTRUCTOR SIGNUP =================
   const handleInstructorSignup = async (e) => {
     e.preventDefault();
     setTeacherAuthError('');
@@ -1013,6 +1074,8 @@ export default function App() {
       .from('student_grades')
       .select('*')
       .eq('instructor_id', instructor.id)
+      .order('school_year', { ascending: false })
+      .order('term', { ascending: true })
       .order('subject', { ascending: true })
       .order('section', { ascending: true })
       .order('full_name', { ascending: true });
@@ -1057,24 +1120,37 @@ export default function App() {
     fetchFacultyList();
   };
 
+  // Helper to get the currently selected School Year & Term for uploads
+  const getActiveSchoolYearAndTerm = () => {
+    if (activePeriodKey && activePeriodKey !== 'ALL' && activePeriodKey.includes('|||')) {
+      const [sy, trm] = activePeriodKey.split('|||');
+      return { school_year: sy, term: trm };
+    }
+    return { school_year: DEFAULT_SCHOOL_YEAR, term: DEFAULT_TERM };
+  };
+
   const downloadTemplate = () => {
+    const { school_year, term } = getActiveSchoolYearAndTerm();
     const csvContent = [
-      'Student ID,Full Name,PIN,Subject,Section,Midterm Grade,Final Grade,Breakdown,Remarks',
-      '26-20437,Acibo Anthoneth V.,0437,IT 100 - Living in the IT Era,BSN 1D,1.75,Pending,Quizzes: 45/60 (26.25%) | Activities: 57/95 (12.00%) | Projects: 91/100 (14.32%) | Midterm Exam: 54/60 (38.00%) | Total: 90.58%,Passed',
-      '25-19221,ACINCID JAYCOB R.,9221,IT 100 - Living in the IT Era,BSN 1D,2.25,Pending,Quizzes: 33/60 (23.25%) | Activities: 57/95 (12.00%) | Projects: 75/100 (13.12%) | Midterm Exam: 42/60 (34.00%) | Total: 82.38%,Passed'
+      'Student ID,Full Name,PIN,Subject,Section,Midterm Grade,Final Grade,Breakdown,Remarks,School Year,Term',
+      `26-20437,Acibo Anthoneth V.,0437,IT 100 - Living in the IT Era,BSN 1D,1.75,Pending,Quizzes: 45/60 (26.25%) | Activities: 57/95 (12.00%) | Projects: 91/100 (14.32%) | Midterm Exam: 54/60 (38.00%) | Total: 90.58%,Passed,${school_year},${term}`,
+      `25-19221,ACINCID JAYCOB R.,9221,IT 100 - Living in the IT Era,BSN 1D,2.25,Pending,Quizzes: 33/60 (23.25%) | Activities: 57/95 (12.00%) | Projects: 75/100 (13.12%) | Midterm Exam: 42/60 (34.00%) | Total: 82.38%,Passed,${school_year},${term}`
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'grades_template_with_final.csv';
+    a.download = `grades_template_${school_year}_${term.replace(/\s+/g, '_')}.csv`;
     a.click();
   };
 
+  // BULK CSV UPLOAD (Defaults show_breakdown to FALSE so breakdowns start hidden)
   const handleCsvUpload = async (e) => {
     const file = e.target.files[0];
     if (!file || !currentInstructor) return;
+
+    const { school_year: activeSy, term: activeTerm } = getActiveSchoolYearAndTerm();
 
     const reader = new FileReader();
     reader.onload = async (event) => {
@@ -1088,14 +1164,22 @@ export default function App() {
       const headerCols = lines[0].toLowerCase().split(',').map((h) => h.trim());
       const hasEmailCol = headerCols.includes('email') || headerCols.includes('gmail');
       const hasFinalCol = headerCols.includes('final grade') || headerCols.includes('final_grade');
+      const syColIdx = headerCols.findIndex((h) => h === 'school year' || h === 'school_year' || h === 'sy');
+      const termColIdx = headerCols.findIndex((h) => h === 'term' || h === 'semester');
 
       const rowsToUpsert = [];
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(',').map((c) => c.trim());
         if (cols.length >= 6) {
+          const rowSy = syColIdx !== -1 && cols[syColIdx] ? cols[syColIdx] : activeSy;
+          const rowTerm = termColIdx !== -1 && cols[termColIdx] ? cols[termColIdx] : activeTerm;
+
           const baseRow = {
             instructor_id: currentInstructor.id,
             instructor_name: currentInstructor.full_name,
+            school_year: rowSy,
+            term: rowTerm,
+            show_breakdown: false, // Default to HIDDEN
           };
 
           if (hasEmailCol && hasFinalCol) {
@@ -1142,20 +1226,125 @@ export default function App() {
         }
       }
 
-      setUploadStatus(`Uploading ${rowsToUpsert.length} records under ${currentInstructor.full_name}...`);
+      setUploadStatus(
+        `Uploading ${rowsToUpsert.length} records to ${activeSy} (${activeTerm}) with Breakdowns Hidden by default...`
+      );
 
       const { error } = await supabase
         .from('student_grades')
-        .upsert(rowsToUpsert, { onConflict: 'student_id,subject,section,instructor_id' });
+        .upsert(rowsToUpsert, {
+          onConflict: 'student_id,subject,section,instructor_id,school_year,term',
+        });
 
       if (error) {
         setUploadStatus('Upload Error: ' + error.message);
       } else {
-        setUploadStatus(`Successfully uploaded/updated ${rowsToUpsert.length} records!`);
+        setUploadStatus(
+          `Successfully uploaded/updated ${rowsToUpsert.length} records in ${activeSy} • ${activeTerm} (Breakdowns set to Hidden)!`
+        );
         fetchInstructorRecords();
       }
     };
     reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // ================= 6. SHOW / HIDE BREAKDOWN CONTROLS (INDIVIDUAL, BY SECTION, OR ENTIRE STUDENT LIST) =================
+  // A. Toggle Breakdown for a Single Student Row
+  const handleToggleSingleBreakdown = async (rec) => {
+    const nextValue = !Boolean(rec.show_breakdown);
+    const { error } = await supabase
+      .from('student_grades')
+      .update({ show_breakdown: nextValue, updated_at: new Date().toISOString() })
+      .eq('id', rec.id)
+      .eq('instructor_id', currentInstructor.id);
+
+    if (error) {
+      alert('Failed to update breakdown visibility: ' + error.message);
+    } else {
+      setAllRecords((prev) =>
+        prev.map((item) => (item.id === rec.id ? { ...item, show_breakdown: nextValue } : item))
+      );
+      setUploadStatus(
+        `Breakdown is now ${nextValue ? 'VISIBLE' : 'HIDDEN'} for ${rec.full_name} (${rec.section}).`
+      );
+    }
+  };
+
+  // B. Toggle Breakdown by Section (Updates all students in the selected section in the active term)
+  const handleSetSectionBreakdownVisibility = async (targetSection, shouldShow) => {
+    if (!currentInstructor || !targetSection || targetSection === 'ALL') return;
+    setUpdatingBreakdown(true);
+
+    let query = supabase
+      .from('student_grades')
+      .update({ show_breakdown: shouldShow, updated_at: new Date().toISOString() })
+      .eq('instructor_id', currentInstructor.id)
+      .eq('section', targetSection);
+
+    if (activePeriodKey !== 'ALL' && activePeriodKey.includes('|||')) {
+      const [sy, trm] = activePeriodKey.split('|||');
+      query = query.eq('school_year', sy).eq('term', trm);
+    }
+
+    const { error } = await query;
+    setUpdatingBreakdown(false);
+
+    if (error) {
+      alert('Failed to update section breakdown visibility: ' + error.message);
+    } else {
+      setAllRecords((prev) =>
+        prev.map((item) => {
+          const matchSection = item.section === targetSection;
+          const sy = item.school_year || DEFAULT_SCHOOL_YEAR;
+          const trm = item.term || DEFAULT_TERM;
+          const matchPeriod =
+            activePeriodKey === 'ALL' || `${sy}|||${trm}` === activePeriodKey;
+          return matchSection && matchPeriod ? { ...item, show_breakdown: shouldShow } : item;
+        })
+      );
+      setUploadStatus(
+        `Breakdown is now ${shouldShow ? 'VISIBLE' : 'HIDDEN'} for all students in section ${targetSection}!`
+      );
+    }
+  };
+
+  // C. Toggle Breakdown for Entire Student List (All students in active term or entire instructor account)
+  const handleSetAllStudentsBreakdownVisibility = async (shouldShow) => {
+    if (!currentInstructor) return;
+    setUpdatingBreakdown(true);
+
+    let query = supabase
+      .from('student_grades')
+      .update({ show_breakdown: shouldShow, updated_at: new Date().toISOString() })
+      .eq('instructor_id', currentInstructor.id);
+
+    let scopeLabel = 'all your students';
+    if (activePeriodKey !== 'ALL' && activePeriodKey.includes('|||')) {
+      const [sy, trm] = activePeriodKey.split('|||');
+      query = query.eq('school_year', sy).eq('term', trm);
+      scopeLabel = `all students in SY ${sy} • ${trm}`;
+    }
+
+    const { error } = await query;
+    setUpdatingBreakdown(false);
+
+    if (error) {
+      alert('Failed to update breakdown visibility for students: ' + error.message);
+    } else {
+      setAllRecords((prev) =>
+        prev.map((item) => {
+          const sy = item.school_year || DEFAULT_SCHOOL_YEAR;
+          const trm = item.term || DEFAULT_TERM;
+          const matchPeriod =
+            activePeriodKey === 'ALL' || `${sy}|||${trm}` === activePeriodKey;
+          return matchPeriod ? { ...item, show_breakdown: shouldShow } : item;
+        })
+      );
+      setUploadStatus(
+        `Breakdown is now ${shouldShow ? 'VISIBLE' : 'HIDDEN'} for ${scopeLabel}!`
+      );
+    }
   };
 
   const computeRemarksFromGrade = (gradeStr, currentRemarks) => {
@@ -1173,9 +1362,12 @@ export default function App() {
     setEditForm({
       email: rec.email || '',
       pin: rec.pin || '',
+      school_year: rec.school_year || DEFAULT_SCHOOL_YEAR,
+      term: rec.term || DEFAULT_TERM,
       midterm_grade: rec.midterm_grade || '',
       final_grade: rec.final_grade || 'Pending',
       breakdown: rec.breakdown || '',
+      show_breakdown: Boolean(rec.show_breakdown),
       remarks: rec.remarks || 'Passed',
     });
   };
@@ -1185,9 +1377,12 @@ export default function App() {
     const updatedFields = {
       email: editForm.email.trim(),
       pin: editForm.pin.trim(),
+      school_year: editForm.school_year.trim() || DEFAULT_SCHOOL_YEAR,
+      term: editForm.term.trim() || DEFAULT_TERM,
       midterm_grade: editForm.midterm_grade.trim(),
       final_grade: editForm.final_grade.trim() || 'Pending',
       breakdown: editForm.breakdown.trim(),
+      show_breakdown: Boolean(editForm.show_breakdown),
       remarks: editForm.remarks.trim(),
       updated_at: new Date().toISOString(),
     };
@@ -1233,10 +1428,53 @@ export default function App() {
     fetchInstructorRecords();
   };
 
-  const subjects = ['ALL', ...new Set(allRecords.map((r) => r.subject))];
-  const sections = ['ALL', ...new Set(allRecords.map((r) => r.section))];
+  // Build Combined List of Academic Period Tabs
+  const academicPeriods = React.useMemo(() => {
+    const map = new Map();
 
-  const filteredRecords = allRecords.filter((r) => {
+    const defaultKey = `${DEFAULT_SCHOOL_YEAR}|||${DEFAULT_TERM}`;
+    map.set(defaultKey, {
+      key: defaultKey,
+      school_year: DEFAULT_SCHOOL_YEAR,
+      term: DEFAULT_TERM,
+      count: 0,
+    });
+
+    customPeriods.forEach((p) => {
+      const k = `${p.school_year}|||${p.term}`;
+      if (!map.has(k)) {
+        map.set(k, { key: k, school_year: p.school_year, term: p.term, count: 0 });
+      }
+    });
+
+    allRecords.forEach((rec) => {
+      const sy = rec.school_year || DEFAULT_SCHOOL_YEAR;
+      const trm = rec.term || DEFAULT_TERM;
+      const k = `${sy}|||${trm}`;
+      if (!map.has(k)) {
+        map.set(k, { key: k, school_year: sy, term: trm, count: 1 });
+      } else {
+        map.get(k).count += 1;
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.school_year !== b.school_year) return b.school_year.localeCompare(a.school_year);
+      return a.term.localeCompare(b.term);
+    });
+  }, [allRecords, customPeriods]);
+
+  const periodFilteredRecords = allRecords.filter((r) => {
+    if (activePeriodKey === 'ALL') return true;
+    const sy = r.school_year || DEFAULT_SCHOOL_YEAR;
+    const trm = r.term || DEFAULT_TERM;
+    return `${sy}|||${trm}` === activePeriodKey;
+  });
+
+  const subjects = ['ALL', ...new Set(periodFilteredRecords.map((r) => r.subject))];
+  const sections = ['ALL', ...new Set(periodFilteredRecords.map((r) => r.section))];
+
+  const filteredRecords = periodFilteredRecords.filter((r) => {
     const matchSubject = filterSubject === 'ALL' || r.subject === filterSubject;
     const matchSection = filterSection === 'ALL' || r.section === filterSection;
     const matchSearch =
@@ -1245,6 +1483,9 @@ export default function App() {
       (r.email && r.email.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchSubject && matchSection && matchSearch;
   });
+
+  // Count how many students in the active period have breakdown visible
+  const visibleBreakdownCount = periodFilteredRecords.filter((r) => Boolean(r.show_breakdown)).length;
 
   const pendingFacultyCount = facultyList.filter((f) => f.status === 'pending').length;
 
@@ -1256,10 +1497,39 @@ export default function App() {
       : name.slice(0, 2).toUpperCase();
   };
 
+  // Student Portal unique periods
+  const studentPeriods = React.useMemo(() => {
+    if (!studentRecords) return [];
+    const seen = new Set();
+    const list = [];
+    studentRecords.forEach((r) => {
+      const sy = r.school_year || DEFAULT_SCHOOL_YEAR;
+      const trm = r.term || DEFAULT_TERM;
+      const key = `${sy}|||${trm}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        list.push({ key, label: `${sy} • ${trm}` });
+      }
+    });
+    return list;
+  }, [studentRecords]);
+
+  const visibleStudentRecords = React.useMemo(() => {
+    if (!studentRecords) return [];
+    if (studentPeriodFilter === 'ALL') return studentRecords;
+    return studentRecords.filter((r) => {
+      const sy = r.school_year || DEFAULT_SCHOOL_YEAR;
+      const trm = r.term || DEFAULT_TERM;
+      return `${sy}|||${trm}` === studentPeriodFilter;
+    });
+  }, [studentRecords, studentPeriodFilter]);
+
   // ============================================================================
   // SEPARATE PAGE 1: TEACHER & SUPER ADMIN PORTAL (/#/teacher)
   // ============================================================================
   if (isTeacherRoute) {
+    const { school_year: activeSyLabel, term: activeTermLabel } = getActiveSchoolYearAndTerm();
+
     return (
       <div className="min-h-screen bg-slate-100 text-slate-800">
         <header className="bg-slate-900 text-white shadow-md">
@@ -1971,7 +2241,6 @@ export default function App() {
                 // ================= TAB 3: INSTRUCTOR PROFILE & PASSWORD SETTINGS =================
                 <>
                   <div className="grid gap-6 md:grid-cols-2">
-                    {/* Card 1: Profile Details (Stays Fixed; Opens Centered Modal on Submit) */}
                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                       <div className="flex items-center gap-2.5 mb-1">
                         <UserCheck className="w-5 h-5 text-indigo-600" />
@@ -2044,7 +2313,6 @@ export default function App() {
                       </form>
                     </div>
 
-                    {/* Card 2: Change Password (Blocks Reusing Current Password + 3 Independent Eye Toggles) */}
                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                       <div className="flex items-center gap-2.5 mb-1">
                         <KeyRound className="w-5 h-5 text-indigo-600" />
@@ -2531,7 +2799,6 @@ export default function App() {
                         className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {/* Modal Header */}
                         <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
                           <div className="flex items-center gap-2.5">
                             <KeyRound className="w-5 h-5 text-amber-400 shrink-0" />
@@ -2559,9 +2826,7 @@ export default function App() {
                           </button>
                         </div>
 
-                        {/* Modal Body */}
                         <div className="p-6 space-y-4">
-                          {/* Target Instructor Summary Banner */}
                           <div className="flex items-center gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
                             <div className="w-10 h-10 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shrink-0">
                               {getInitials(adminResetFaculty.full_name)}
@@ -2597,7 +2862,6 @@ export default function App() {
                           )}
 
                           <form onSubmit={handleAdminResetFacultyPassword} className="space-y-4">
-                            {/* Box 1: New Strong Password + Independent Eye Toggle */}
                             <div>
                               <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
                                 New Strong Password
@@ -2627,7 +2891,6 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* Box 2: Confirm New Password + Independent Eye Toggle */}
                             <div>
                               <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
                                 Confirm New Password
@@ -2662,14 +2925,12 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* Live Password Strength & Reuse Checklist */}
                             <PasswordStrengthChecklist
                               password={adminNewPass}
                               confirmPassword={adminConfirmPass}
                               currentPassword={adminResetFaculty.password}
                             />
 
-                            {/* Modal Footer Actions */}
                             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
                               <button
                                 type="button"
@@ -2703,16 +2964,98 @@ export default function App() {
                   )}
                 </>
               ) : (
-                // ================= TAB 1: INSTRUCTOR CLASS RECORDS =================
+                // ================= TAB 1: INSTRUCTOR CLASS RECORDS (WITH SCHOOL YEAR, TERM & BREAKDOWN VISIBILITY CONTROLS) =================
                 <>
+                  {/* Academic Period / Semester Tabs Bar */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                      <div className="flex items-center gap-2.5">
+                        <Calendar className="w-5 h-5 text-indigo-600" />
+                        <div>
+                          <h2 className="text-sm font-bold text-slate-900">
+                            Academic School Year & Term Tabs
+                          </h2>
+                          <p className="text-xs text-slate-500">
+                            Switch between semesters anytime. Previous school years and terms remain safely stored.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPeriodModal(true)}
+                        className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center gap-1.5 border border-indigo-200 transition self-start sm:self-auto"
+                      >
+                        <Plus className="w-4 h-4" />
+                        New School Year / Term
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {academicPeriods.map((period) => {
+                        const isActive = activePeriodKey === period.key;
+                        return (
+                          <button
+                            key={period.key}
+                            type="button"
+                            onClick={() => {
+                              setActivePeriodKey(period.key);
+                              setFilterSubject('ALL');
+                              setFilterSection('ALL');
+                            }}
+                            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition ${
+                              isActive
+                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <FolderOpen className="w-3.5 h-3.5" />
+                            <span>
+                              SY {period.school_year} • {period.term}
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                                isActive
+                                  ? 'bg-indigo-800 text-indigo-100'
+                                  : 'bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              {period.count}
+                            </span>
+                          </button>
+                        );
+                      })}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActivePeriodKey('ALL');
+                          setFilterSubject('ALL');
+                          setFilterSection('ALL');
+                        }}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition ${
+                          activePeriodKey === 'ALL'
+                            ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span>All Terms Archive ({allRecords.length})</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Bulk CSV Upload Card */}
                   <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                     <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                       <div>
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 mb-1.5">
+                          <Calendar className="w-3 h-3" />
+                          Target Upload Period: SY {activeSyLabel} • {activeTermLabel}
+                        </div>
                         <h2 className="text-lg font-bold text-slate-900">
                           Bulk CSV Upload — {currentInstructor.full_name}
                         </h2>
                         <p className="text-sm text-slate-500">
-                          Uploaded students are linked exclusively to your instructor account.
+                          Uploaded records default to <strong>Breakdown: Hidden</strong> until you reveal them below.
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-3">
@@ -2723,7 +3066,7 @@ export default function App() {
                           <Download className="w-4 h-4" /> Download CSV Template
                         </button>
                         <label className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium cursor-pointer">
-                          <Upload className="w-4 h-4" /> Upload CSV File
+                          <Upload className="w-4 h-4" /> Upload CSV to {activeTermLabel}
                           <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
                         </label>
                       </div>
@@ -2731,8 +3074,8 @@ export default function App() {
                     {uploadStatus && (
                       <div className="mt-4 p-3 rounded-lg bg-indigo-50 text-indigo-900 text-sm font-medium flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-indigo-600" />
-                          {uploadStatus}
+                          <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <span>{uploadStatus}</span>
                         </div>
                         <button
                           onClick={() => setUploadStatus('')}
@@ -2744,13 +3087,15 @@ export default function App() {
                     )}
                   </div>
 
+                  {/* Master Class Table + Breakdown Visibility Control Bar */}
                   <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                    <div className="flex flex-col sm:flex-row gap-3 justify-between mb-6">
+                    {/* Search & Subject/Section Filter Row */}
+                    <div className="flex flex-col sm:flex-row gap-3 justify-between mb-4">
                       <div className="relative flex-1">
                         <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                         <input
                           type="text"
-                          placeholder="Search your students by Name, ID, or Gmail..."
+                          placeholder="Search students in this term by Name, ID, or Gmail..."
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
                           className="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-300 text-sm"
@@ -2764,7 +3109,7 @@ export default function App() {
                         >
                           {subjects.map((sub) => (
                             <option key={sub} value={sub}>
-                              {sub === 'ALL' ? 'All My Subjects' : sub}
+                              {sub === 'ALL' ? 'All Subjects in Term' : sub}
                             </option>
                           ))}
                         </select>
@@ -2775,10 +3120,111 @@ export default function App() {
                         >
                           {sections.map((sec) => (
                             <option key={sec} value={sec}>
-                              {sec === 'ALL' ? 'All My Sections' : sec}
+                              {sec === 'ALL' ? 'All Sections in Term' : sec}
                             </option>
                           ))}
                         </select>
+                      </div>
+                    </div>
+
+                    {/* BREAKDOWN VISIBILITY CONTROL BAR (By Section & By Entire Student List) */}
+                    <div className="mb-6 p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      <div className="flex items-start gap-2.5">
+                        <Layers className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                              Grade Breakdown Visibility Controls
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 text-indigo-800">
+                              {visibleBreakdownCount} of {periodFilteredRecords.length} Visible
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Default is <strong>Hidden</strong>. Toggle breakdown visibility for all students, by section, or click any student's badge below.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* By Section Controls (Active when a specific section is selected, or quick section selector) */}
+                        {filterSection !== 'ALL' ? (
+                          <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-indigo-200 shadow-sm">
+                            <span className="text-xs font-bold text-indigo-900 mr-1">
+                              Section {filterSection}:
+                            </span>
+                            <button
+                              type="button"
+                              disabled={updatingBreakdown}
+                              onClick={() => handleSetSectionBreakdownVisibility(filterSection, true)}
+                              className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 transition"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              Show Section
+                            </button>
+                            <button
+                              type="button"
+                              disabled={updatingBreakdown}
+                              onClick={() => handleSetSectionBreakdownVisibility(filterSection, false)}
+                              className="px-2.5 py-1 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-semibold flex items-center gap-1 transition"
+                            >
+                              <EyeOff className="w-3.5 h-3.5" />
+                              Hide Section
+                            </button>
+                          </div>
+                        ) : (
+                          sections.filter((s) => s !== 'ALL').map((sec) => (
+                            <div
+                              key={sec}
+                              className="flex items-center gap-1 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200"
+                            >
+                              <span className="text-xs font-bold text-slate-700 mr-1">{sec}:</span>
+                              <button
+                                type="button"
+                                disabled={updatingBreakdown}
+                                onClick={() => handleSetSectionBreakdownVisibility(sec, true)}
+                                className="px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-bold flex items-center gap-1 transition"
+                                title={`Show breakdown for all students in ${sec}`}
+                              >
+                                <Eye className="w-3 h-3" />
+                                Show
+                              </button>
+                              <button
+                                type="button"
+                                disabled={updatingBreakdown}
+                                onClick={() => handleSetSectionBreakdownVisibility(sec, false)}
+                                className="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold flex items-center gap-1 transition"
+                                title={`Hide breakdown for all students in ${sec}`}
+                              >
+                                <EyeOff className="w-3 h-3" />
+                                Hide
+                              </button>
+                            </div>
+                          ))
+                        )}
+
+                        {/* Entire Student List Controls */}
+                        <div className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-1.5 rounded-lg">
+                          <span className="text-xs font-bold text-slate-300 mr-1">All Students:</span>
+                          <button
+                            type="button"
+                            disabled={updatingBreakdown || periodFilteredRecords.length === 0}
+                            onClick={() => handleSetAllStudentsBreakdownVisibility(true)}
+                            className="px-2.5 py-1 rounded bg-emerald-500 hover:bg-emerald-600 text-slate-950 text-xs font-extrabold flex items-center gap-1 transition"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            Show All
+                          </button>
+                          <button
+                            type="button"
+                            disabled={updatingBreakdown || periodFilteredRecords.length === 0}
+                            onClick={() => handleSetAllStudentsBreakdownVisibility(false)}
+                            className="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold flex items-center gap-1 transition"
+                          >
+                            <EyeOff className="w-3.5 h-3.5" />
+                            Hide All
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -2786,6 +3232,7 @@ export default function App() {
                       <table className="w-full text-left border-collapse text-sm">
                         <thead>
                           <tr className="border-b border-slate-200 text-slate-500 uppercase text-xs">
+                            <th className="py-3 px-3">SY / Term</th>
                             <th className="py-3 px-3">Student ID</th>
                             <th className="py-3 px-3">Full Name</th>
                             <th className="py-3 px-3">Registered Gmail</th>
@@ -2794,7 +3241,7 @@ export default function App() {
                             <th className="py-3 px-3">Section</th>
                             <th className="py-3 px-3">Midterm</th>
                             <th className="py-3 px-3">Final</th>
-                            <th className="py-3 px-3">Breakdown</th>
+                            <th className="py-3 px-3">Breakdown & Visibility</th>
                             <th className="py-3 px-3">Remarks</th>
                             <th className="py-3 px-3 text-right">Action</th>
                           </tr>
@@ -2802,21 +3249,61 @@ export default function App() {
                         <tbody className="divide-y divide-slate-100">
                           {loadingTeacher ? (
                             <tr>
-                              <td colSpan="11" className="py-8 text-center text-slate-400">
+                              <td colSpan="12" className="py-8 text-center text-slate-400">
                                 Loading your class records...
                               </td>
                             </tr>
                           ) : filteredRecords.length === 0 ? (
                             <tr>
-                              <td colSpan="11" className="py-8 text-center text-slate-400">
-                                No student records found under your account. Upload a CSV file to get started.
+                              <td colSpan="12" className="py-8 text-center text-slate-400">
+                                {activePeriodKey === 'ALL'
+                                  ? 'No student records found under your account. Upload a CSV file to get started.'
+                                  : `No student records uploaded for SY ${activeSyLabel} • ${activeTermLabel} yet. Click "Upload CSV to ${activeTermLabel}" above to add records.`}
                               </td>
                             </tr>
                           ) : (
                             filteredRecords.map((rec) => {
                               const isEditing = editingId === rec.id;
+                              const isBreakdownVisible = Boolean(rec.show_breakdown);
+
                               return (
                                 <tr key={rec.id} className={isEditing ? 'bg-indigo-50/60' : 'hover:bg-slate-50'}>
+                                  <td className="py-3 px-3 whitespace-nowrap">
+                                    {isEditing ? (
+                                      <div className="flex flex-col gap-1">
+                                        <input
+                                          type="text"
+                                          value={editForm.school_year}
+                                          onChange={(e) =>
+                                            setEditForm({ ...editForm, school_year: e.target.value })
+                                          }
+                                          placeholder="2026-2027"
+                                          className="w-24 px-2 py-1 rounded border border-indigo-300 bg-white text-xs font-semibold"
+                                        />
+                                        <select
+                                          value={editForm.term}
+                                          onChange={(e) =>
+                                            setEditForm({ ...editForm, term: e.target.value })
+                                          }
+                                          className="w-24 px-1.5 py-1 rounded border border-indigo-300 bg-white text-xs"
+                                        >
+                                          <option value="1st Term">1st Term</option>
+                                          <option value="2nd Term">2nd Term</option>
+                                          <option value="Midyear / Summer">Midyear / Summer</option>
+                                        </select>
+                                      </div>
+                                    ) : (
+                                      <div className="text-xs">
+                                        <span className="font-bold text-slate-800 block">
+                                          {rec.school_year || DEFAULT_SCHOOL_YEAR}
+                                        </span>
+                                        <span className="text-[11px] text-indigo-600 font-semibold">
+                                          {rec.term || DEFAULT_TERM}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </td>
+
                                   <td className="py-3 px-3 font-mono text-xs">{rec.student_id}</td>
                                   <td className="py-3 px-3 font-medium text-slate-900">{rec.full_name}</td>
 
@@ -2895,18 +3382,56 @@ export default function App() {
                                     )}
                                   </td>
 
+                                  {/* Breakdown Text + Individual Show/Hide Toggle Badge */}
                                   <td className="py-3 px-3 text-xs text-slate-500 max-w-xs">
                                     {isEditing ? (
-                                      <input
-                                        type="text"
-                                        value={editForm.breakdown}
-                                        onChange={(e) => setEditForm({ ...editForm, breakdown: e.target.value })}
-                                        className="w-full min-w-[160px] px-2 py-1 rounded border border-indigo-300 bg-white text-xs text-slate-700"
-                                      />
+                                      <div className="space-y-1.5">
+                                        <input
+                                          type="text"
+                                          value={editForm.breakdown}
+                                          onChange={(e) => setEditForm({ ...editForm, breakdown: e.target.value })}
+                                          className="w-full min-w-[180px] px-2 py-1 rounded border border-indigo-300 bg-white text-xs text-slate-700"
+                                        />
+                                        <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(editForm.show_breakdown)}
+                                            onChange={(e) =>
+                                              setEditForm({ ...editForm, show_breakdown: e.target.checked })
+                                            }
+                                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                          />
+                                          Show Breakdown to Student
+                                        </label>
+                                      </div>
                                     ) : (
-                                      <span className="line-clamp-1" title={rec.breakdown}>
-                                        {rec.breakdown || '—'}
-                                      </span>
+                                      <div className="flex flex-col items-start gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleSingleBreakdown(rec)}
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border transition ${
+                                            isBreakdownVisible
+                                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                              : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                                          }`}
+                                          title="Click to toggle breakdown visibility for this student"
+                                        >
+                                          {isBreakdownVisible ? (
+                                            <>
+                                              <Eye className="w-3 h-3 text-emerald-600" />
+                                              Visible to Student
+                                            </>
+                                          ) : (
+                                            <>
+                                              <EyeOff className="w-3 h-3 text-slate-400" />
+                                              Hidden (Default)
+                                            </>
+                                          )}
+                                        </button>
+                                        <span className="line-clamp-1 text-[11px]" title={rec.breakdown}>
+                                          {rec.breakdown || '—'}
+                                        </span>
+                                      </div>
                                     )}
                                   </td>
 
@@ -2959,6 +3484,25 @@ export default function App() {
                                     ) : (
                                       <div className="inline-flex items-center gap-1">
                                         <button
+                                          onClick={() => handleToggleSingleBreakdown(rec)}
+                                          className={`p-1.5 rounded-lg transition ${
+                                            isBreakdownVisible
+                                              ? 'text-indigo-600 hover:bg-indigo-50'
+                                              : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                                          }`}
+                                          title={
+                                            isBreakdownVisible
+                                              ? 'Hide breakdown from this student'
+                                              : 'Show breakdown to this student'
+                                          }
+                                        >
+                                          {isBreakdownVisible ? (
+                                            <Eye className="w-4 h-4" />
+                                          ) : (
+                                            <EyeOff className="w-4 h-4" />
+                                          )}
+                                        </button>
+                                        <button
                                           onClick={() => handleSendSinglePin(rec)}
                                           disabled={sendingEmailId === rec.id || !rec.email}
                                           className={`p-1.5 rounded-lg transition ${
@@ -2995,6 +3539,95 @@ export default function App() {
                       </table>
                     </div>
                   </div>
+
+                  {/* CENTERED MODAL FOR CREATING A NEW SCHOOL YEAR & TERM TAB */}
+                  {showNewPeriodModal && (
+                    <div
+                      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+                      onClick={() => setShowNewPeriodModal(false)}
+                    >
+                      <div
+                        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Calendar className="w-5 h-5 text-amber-400 shrink-0" />
+                            <div>
+                              <h3 className="font-bold text-sm leading-tight">
+                                Add New School Year & Term Tab
+                              </h3>
+                              <p className="text-[11px] text-slate-400">
+                                Create a workspace for an upcoming semester
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowNewPeriodModal(false)}
+                            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        <form onSubmit={handleCreateNewAcademicPeriod} className="p-6 space-y-4">
+                          <div>
+                            <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                              School Year
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="e.g., 2026-2027 or 2027-2028"
+                              value={newSchoolYearInput}
+                              onChange={(e) => setNewSchoolYearInput(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                              Academic Term / Semester
+                            </label>
+                            <select
+                              value={newTermInput}
+                              onChange={(e) => setNewTermInput(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            >
+                              <option value="1st Term">1st Term</option>
+                              <option value="2nd Term">2nd Term</option>
+                              <option value="Midyear / Summer">Midyear / Summer</option>
+                            </select>
+                          </div>
+
+                          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                            Creating this tab switches your active view to{' '}
+                            <strong className="text-indigo-700">
+                              SY {newSchoolYearInput.trim() || DEFAULT_SCHOOL_YEAR} • {newTermInput}
+                            </strong>
+                            . All grades from your previous semesters remain intact in their own tabs.
+                          </div>
+
+                          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                            <button
+                              type="button"
+                              onClick={() => setShowNewPeriodModal(false)}
+                              className="px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition"
+                            >
+                              Create & Switch to Term
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -3198,7 +3831,7 @@ export default function App() {
           </div>
         ) : (
           <div className="max-w-3xl mx-auto">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6 flex items-center justify-between">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <span className="text-xs font-semibold uppercase tracking-wider text-indigo-600">
                   Official Academic Record
@@ -3215,20 +3848,57 @@ export default function App() {
                   setStudentIdInput('');
                   setPinInput('');
                 }}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium self-start sm:self-auto"
               >
                 <LogOut className="w-4 h-4" /> Sign Out
               </button>
             </div>
 
+            {/* Student Portal School Year & Term Switcher */}
+            {studentPeriods.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-5">
+                <button
+                  type="button"
+                  onClick={() => setStudentPeriodFilter('ALL')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition ${
+                    studentPeriodFilter === 'ALL'
+                      ? 'bg-indigo-950 text-white border-indigo-950'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  All Semesters ({studentRecords.length})
+                </button>
+                {studentPeriods.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => setStudentPeriodFilter(p.key)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition ${
+                      studentPeriodFilter === p.key
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    SY {p.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="grid gap-4 sm:grid-cols-2">
-              {studentRecords.map((rec) => (
+              {visibleStudentRecords.map((rec) => (
                 <div key={rec.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div>
-                      <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 mb-1">
-                        {rec.section}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                        <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700">
+                          {rec.section}
+                        </span>
+                        <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700">
+                          SY {rec.school_year || DEFAULT_SCHOOL_YEAR} • {rec.term || DEFAULT_TERM}
+                        </span>
+                      </div>
                       <h3 className="font-bold text-lg text-slate-900">{rec.subject}</h3>
                       {rec.instructor_name && (
                         <p className="text-xs text-slate-500 mt-0.5">
@@ -3262,7 +3932,8 @@ export default function App() {
                     </div>
                   </div>
 
-                  {rec.breakdown && (
+                  {/* ONLY DISPLAY BREAKDOWN IF INSTRUCTOR HAS ENABLED show_breakdown = true */}
+                  {Boolean(rec.show_breakdown) && rec.breakdown && (
                     <p className="text-xs text-slate-500 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100">
                       <strong>Breakdown:</strong> {rec.breakdown}
                     </p>
