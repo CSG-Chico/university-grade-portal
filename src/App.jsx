@@ -175,18 +175,6 @@ export default function App() {
   const [sendingProfilePin, setSendingProfilePin] = useState(false);
   const [profileVerifyMsg, setProfileVerifyMsg] = useState({ type: '', text: '' });
 
-  // Allow closing the verification modal with the Escape key
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && showProfileVerify) {
-        setShowProfileVerify(false);
-        setProfileVerifyMsg({ type: '', text: '' });
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showProfileVerify]);
-
   // Change Password State (3 Independent Eye Toggles!)
   const [currentPassInput, setCurrentPassInput] = useState('');
   const [newPassInput, setNewPassInput] = useState('');
@@ -197,11 +185,35 @@ export default function App() {
   const [passwordStatusMsg, setPasswordStatusMsg] = useState({ type: '', text: '' });
   const [savingPassword, setSavingPassword] = useState(false);
 
-  // Super Admin Manual Password Reset State
+  // Super Admin Manual Password Reset Modal State (With Confirm Password & Validation)
   const [adminResetFaculty, setAdminResetFaculty] = useState(null);
   const [adminNewPass, setAdminNewPass] = useState('');
+  const [adminConfirmPass, setAdminConfirmPass] = useState('');
   const [showAdminResetPass, setShowAdminResetPass] = useState(false);
+  const [showAdminResetConfirmPass, setShowAdminResetConfirmPass] = useState(false);
+  const [adminResetMsg, setAdminResetMsg] = useState({ type: '', text: '' });
+  const [facultyActionBanner, setFacultyActionBanner] = useState('');
   const [savingAdminReset, setSavingAdminReset] = useState(false);
+
+  // Allow closing active modals with the Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (showProfileVerify) {
+          setShowProfileVerify(false);
+          setProfileVerifyMsg({ type: '', text: '' });
+        }
+        if (adminResetFaculty) {
+          setAdminResetFaculty(null);
+          setAdminNewPass('');
+          setAdminConfirmPass('');
+          setAdminResetMsg({ type: '', text: '' });
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showProfileVerify, adminResetFaculty]);
 
   // Instructor Signup Form (2 Independent Eye Toggles!)
   const [signupName, setSignupName] = useState('');
@@ -875,38 +887,62 @@ export default function App() {
     setPasswordStatusMsg({ type: 'success', text: 'Your password has been changed successfully!' });
   };
 
-  // Super Admin: Direct Password Reset for Any Instructor
+  // Super Admin: Direct Password Reset Modal Handler (With Confirm Password & Validation)
   const handleAdminResetFacultyPassword = async (e) => {
     e.preventDefault();
-    if (!adminResetFaculty || !adminNewPass.trim()) return;
+    if (!adminResetFaculty) return;
+    setAdminResetMsg({ type: '', text: '' });
 
-    const { isValid } = evaluatePasswordStrength(adminNewPass.trim());
+    const { isValid } = evaluatePasswordStrength(adminNewPass);
     if (!isValid) {
-      alert(
-        'Please enter a strong password (at least 8 characters, with uppercase, lowercase, number, and special character).'
-      );
+      setAdminResetMsg({
+        type: 'error',
+        text: 'Password must meet all security requirements (at least 8 characters, uppercase, lowercase, number, and special character).',
+      });
       return;
     }
 
-    if (adminNewPass.trim() === adminResetFaculty.password) {
-      alert('The new password cannot be the same as the instructor’s current password.');
+    if (adminNewPass !== adminConfirmPass) {
+      setAdminResetMsg({
+        type: 'error',
+        text: 'New password and confirmation password do not match.',
+      });
+      return;
+    }
+
+    if (adminNewPass === adminResetFaculty.password) {
+      setAdminResetMsg({
+        type: 'error',
+        text: 'The new password cannot be the same as this instructor’s current password.',
+      });
       return;
     }
 
     setSavingAdminReset(true);
     const { error } = await supabase
       .from('instructors')
-      .update({ password: adminNewPass.trim() })
+      .update({ password: adminNewPass })
       .eq('id', adminResetFaculty.id);
 
     setSavingAdminReset(false);
 
     if (error) {
-      alert('Failed to reset password: ' + error.message);
+      setAdminResetMsg({
+        type: 'error',
+        text: 'Failed to reset password: ' + error.message,
+      });
     } else {
-      alert(`Password for ${adminResetFaculty.full_name} has been reset to: ${adminNewPass.trim()}`);
+      // If Super Admin reset their own password here, keep currentInstructor in sync
+      if (currentInstructor && adminResetFaculty.id === currentInstructor.id) {
+        setCurrentInstructor((prev) => ({ ...prev, password: adminNewPass }));
+      }
+      setFacultyActionBanner(
+        `Password for ${adminResetFaculty.full_name} (${adminResetFaculty.email}) has been updated successfully!`
+      );
       setAdminResetFaculty(null);
       setAdminNewPass('');
+      setAdminConfirmPass('');
+      setAdminResetMsg({ type: '', text: '' });
       fetchFacultyList();
     }
   };
@@ -2144,7 +2180,6 @@ export default function App() {
                         className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {/* Modal Header */}
                         <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
                           <div className="flex items-center gap-2.5">
                             <ShieldCheck className="w-5 h-5 text-amber-400 shrink-0" />
@@ -2170,7 +2205,6 @@ export default function App() {
                           </button>
                         </div>
 
-                        {/* Modal Body */}
                         <div className="p-6 space-y-4">
                           {profileVerifyMsg.text && (
                             <div
@@ -2189,7 +2223,6 @@ export default function App() {
                             </div>
                           )}
 
-                          {/* Pending Changes Summary Box */}
                           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1.5 text-slate-600">
                             <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
                               Pending Profile Update
@@ -2214,7 +2247,6 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* Method Switcher: Password vs Email PIN */}
                           <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
                             <button
                               type="button"
@@ -2374,146 +2406,302 @@ export default function App() {
                   )}
                 </>
               ) : teacherViewTab === 'faculty' && currentInstructor.role === 'admin' ? (
-                // ================= TAB 2: SUPER ADMIN FACULTY APPROVAL & PASSWORD RESET =================
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                  <div className="mb-6">
-                    <h2 className="text-lg font-bold text-slate-900">Instructor Account Requests & Directory</h2>
-                    <p className="text-sm text-slate-500">
-                      Approve faculty requests, or reset an instructor's password if they get locked out.
-                    </p>
-                  </div>
+                // ================= TAB 2: SUPER ADMIN FACULTY APPROVAL & PASSWORD RESET MODAL =================
+                <>
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                    <div className="mb-6">
+                      <h2 className="text-lg font-bold text-slate-900">Instructor Account Requests & Directory</h2>
+                      <p className="text-sm text-slate-500">
+                        Approve faculty requests, or reset an instructor's password if they get locked out.
+                      </p>
+                    </div>
 
-                  {adminResetFaculty && (
-                    <form
-                      onSubmit={handleAdminResetFacultyPassword}
-                      className="mb-6 p-4 rounded-xl bg-indigo-50 border border-indigo-200 flex flex-col sm:flex-row items-center justify-between gap-3"
-                    >
-                      <div className="text-xs text-indigo-950">
-                        <span className="font-bold uppercase tracking-wider text-indigo-700 block">
-                          Super Admin Password Override
-                        </span>
-                        Setting a new strong password for <strong>{adminResetFaculty.full_name}</strong> (
-                        {adminResetFaculty.email})
-                      </div>
-                      <div className="flex items-center gap-2 w-full sm:w-auto">
-                        <div className="relative">
-                          <input
-                            type={showAdminResetPass ? 'text' : 'password'}
-                            required
-                            placeholder="e.g., Unp@2026!"
-                            value={adminNewPass}
-                            onChange={(e) => setAdminNewPass(e.target.value)}
-                            className="px-3 py-1.5 pr-8 rounded-lg border border-indigo-300 bg-white text-xs font-mono"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowAdminResetPass(!showAdminResetPass)}
-                            className="absolute right-2 top-1.5 text-slate-400 hover:text-slate-600"
-                          >
-                            {showAdminResetPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                          </button>
+                    {facultyActionBanner && (
+                      <div className="mb-5 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>{facultyActionBanner}</span>
                         </div>
                         <button
-                          type="submit"
-                          disabled={savingAdminReset}
-                          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold whitespace-nowrap"
-                        >
-                          {savingAdminReset ? 'Saving...' : 'Save Password'}
-                        </button>
-                        <button
                           type="button"
-                          onClick={() => {
-                            setAdminResetFaculty(null);
-                            setAdminNewPass('');
-                          }}
-                          className="p-1.5 text-slate-500 hover:text-slate-800"
+                          onClick={() => setFacultyActionBanner('')}
+                          className="text-xs text-emerald-600 hover:text-emerald-900"
                         >
-                          <X className="w-4 h-4" />
+                          Dismiss
                         </button>
                       </div>
-                    </form>
-                  )}
+                    )}
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-slate-500 uppercase text-xs">
-                          <th className="py-3 px-3">Instructor Name</th>
-                          <th className="py-3 px-3">Department</th>
-                          <th className="py-3 px-3">Email</th>
-                          <th className="py-3 px-3">Role</th>
-                          <th className="py-3 px-3">Status</th>
-                          <th className="py-3 px-3 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {facultyList.map((fac) => (
-                          <tr key={fac.id} className="hover:bg-slate-50">
-                            <td className="py-3 px-3 font-semibold text-slate-900">{fac.full_name}</td>
-                            <td className="py-3 px-3">{fac.department}</td>
-                            <td className="py-3 px-3 font-mono text-xs text-slate-600">{fac.email}</td>
-                            <td className="py-3 px-3 uppercase text-xs font-bold text-indigo-700">{fac.role}</td>
-                            <td className="py-3 px-3">
-                              <span
-                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                                  fac.status === 'approved'
-                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                    : fac.status === 'pending'
-                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                    : 'bg-red-50 text-red-700 border border-red-200'
-                                }`}
-                              >
-                                {fac.status === 'pending' && <Clock className="w-3 h-3" />}
-                                {fac.status.toUpperCase()}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 text-right whitespace-nowrap space-x-1.5">
-                              <button
-                                onClick={() => {
-                                  setAdminResetFaculty(fac);
-                                  setAdminNewPass('');
-                                  setShowAdminResetPass(false);
-                                }}
-                                className="px-2.5 py-1 rounded-lg border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-semibold inline-flex items-center gap-1 transition"
-                                title="Set a new password for this instructor"
-                              >
-                                <RefreshCw className="w-3 h-3" />
-                                Reset Pass
-                              </button>
-                              {fac.role !== 'admin' && (
-                                <>
-                                  {fac.status !== 'approved' && (
-                                    <button
-                                      onClick={() => handleUpdateFacultyStatus(fac.id, 'approved')}
-                                      className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition"
-                                    >
-                                      Approve
-                                    </button>
-                                  )}
-                                  {fac.status !== 'rejected' && (
-                                    <button
-                                      onClick={() => handleUpdateFacultyStatus(fac.id, 'rejected')}
-                                      className="px-3 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-semibold transition"
-                                    >
-                                      Reject / Suspend
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={() => handleDeleteFaculty(fac)}
-                                    className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition align-middle"
-                                    title="Delete Instructor"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </>
-                              )}
-                            </td>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-slate-500 uppercase text-xs">
+                            <th className="py-3 px-3">Instructor Name</th>
+                            <th className="py-3 px-3">Department</th>
+                            <th className="py-3 px-3">Email</th>
+                            <th className="py-3 px-3">Role</th>
+                            <th className="py-3 px-3">Status</th>
+                            <th className="py-3 px-3 text-right">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {facultyList.map((fac) => (
+                            <tr key={fac.id} className="hover:bg-slate-50">
+                              <td className="py-3 px-3 font-semibold text-slate-900">{fac.full_name}</td>
+                              <td className="py-3 px-3">{fac.department}</td>
+                              <td className="py-3 px-3 font-mono text-xs text-slate-600">{fac.email}</td>
+                              <td className="py-3 px-3 uppercase text-xs font-bold text-indigo-700">{fac.role}</td>
+                              <td className="py-3 px-3">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                                    fac.status === 'approved'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : fac.status === 'pending'
+                                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      : 'bg-red-50 text-red-700 border border-red-200'
+                                  }`}
+                                >
+                                  {fac.status === 'pending' && <Clock className="w-3 h-3" />}
+                                  {fac.status.toUpperCase()}
+                                </span>
+                              </td>
+                              <td className="py-3 px-3 text-right whitespace-nowrap space-x-1.5">
+                                <button
+                                  onClick={() => {
+                                    setAdminResetFaculty(fac);
+                                    setAdminNewPass('');
+                                    setAdminConfirmPass('');
+                                    setShowAdminResetPass(false);
+                                    setShowAdminResetConfirmPass(false);
+                                    setAdminResetMsg({ type: '', text: '' });
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-semibold inline-flex items-center gap-1 transition"
+                                  title="Open password override modal for this instructor"
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                  Reset Pass
+                                </button>
+                                {fac.role !== 'admin' && (
+                                  <>
+                                    {fac.status !== 'approved' && (
+                                      <button
+                                        onClick={() => handleUpdateFacultyStatus(fac.id, 'approved')}
+                                        className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition"
+                                      >
+                                        Approve
+                                      </button>
+                                    )}
+                                    {fac.status !== 'rejected' && (
+                                      <button
+                                        onClick={() => handleUpdateFacultyStatus(fac.id, 'rejected')}
+                                        className="px-3 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-semibold transition"
+                                      >
+                                        Reject / Suspend
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => handleDeleteFaculty(fac)}
+                                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition align-middle"
+                                      title="Delete Instructor"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
+
+                  {/* CENTERED MODAL OVERLAY FOR SUPER ADMIN PASSWORD OVERRIDE */}
+                  {adminResetFaculty && (
+                    <div
+                      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+                      onClick={() => {
+                        setAdminResetFaculty(null);
+                        setAdminNewPass('');
+                        setAdminConfirmPass('');
+                        setAdminResetMsg({ type: '', text: '' });
+                      }}
+                    >
+                      <div
+                        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {/* Modal Header */}
+                        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <KeyRound className="w-5 h-5 text-amber-400 shrink-0" />
+                            <div>
+                              <h3 className="font-bold text-sm leading-tight">
+                                Super Admin Password Override
+                              </h3>
+                              <p className="text-[11px] text-slate-400">
+                                Set a new strong password for this instructor
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAdminResetFaculty(null);
+                              setAdminNewPass('');
+                              setAdminConfirmPass('');
+                              setAdminResetMsg({ type: '', text: '' });
+                            }}
+                            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                            title="Close modal (Esc)"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-6 space-y-4">
+                          {/* Target Instructor Summary Banner */}
+                          <div className="flex items-center gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                            <div className="w-10 h-10 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shrink-0">
+                              {getInitials(adminResetFaculty.full_name)}
+                            </div>
+                            <div className="overflow-hidden">
+                              <h4 className="font-bold text-slate-900 text-sm truncate">
+                                {adminResetFaculty.full_name}
+                              </h4>
+                              <p className="text-xs text-slate-500 font-mono truncate">
+                                {adminResetFaculty.email}
+                              </p>
+                              <span className="inline-block mt-0.5 text-[10px] font-bold uppercase px-2 py-0.2 rounded bg-indigo-50 text-indigo-700">
+                                {adminResetFaculty.department} • {adminResetFaculty.role}
+                              </span>
+                            </div>
+                          </div>
+
+                          {adminResetMsg.text && (
+                            <div
+                              className={`p-3 rounded-lg text-xs font-medium flex items-start gap-2 ${
+                                adminResetMsg.type === 'error'
+                                  ? 'bg-red-50 text-red-700 border border-red-200'
+                                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              }`}
+                            >
+                              {adminResetMsg.type === 'error' ? (
+                                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                              ) : (
+                                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
+                              )}
+                              <span>{adminResetMsg.text}</span>
+                            </div>
+                          )}
+
+                          <form onSubmit={handleAdminResetFacultyPassword} className="space-y-4">
+                            {/* Box 1: New Strong Password + Independent Eye Toggle */}
+                            <div>
+                              <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                                New Strong Password
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type={showAdminResetPass ? 'text' : 'password'}
+                                  required
+                                  autoFocus
+                                  placeholder="Enter new strong password"
+                                  value={adminNewPass}
+                                  onChange={(e) => setAdminNewPass(e.target.value)}
+                                  className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowAdminResetPass(!showAdminResetPass)}
+                                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+                                  title={showAdminResetPass ? 'Hide new password' : 'Show new password'}
+                                >
+                                  {showAdminResetPass ? (
+                                    <EyeOff className="w-4 h-4" />
+                                  ) : (
+                                    <Eye className="w-4 h-4" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Box 2: Confirm New Password + Independent Eye Toggle */}
+                            <div>
+                              <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                                Confirm New Password
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type={showAdminResetConfirmPass ? 'text' : 'password'}
+                                  required
+                                  placeholder="Re-enter new password"
+                                  value={adminConfirmPass}
+                                  onChange={(e) => setAdminConfirmPass(e.target.value)}
+                                  className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setShowAdminResetConfirmPass(!showAdminResetConfirmPass)
+                                  }
+                                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+                                  title={
+                                    showAdminResetConfirmPass
+                                      ? 'Hide confirm password'
+                                      : 'Show confirm password'
+                                  }
+                                >
+                                  {showAdminResetConfirmPass ? (
+                                    <EyeOff className="w-4 h-4" />
+                                  ) : (
+                                    <Eye className="w-4 h-4" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Live Password Strength & Reuse Checklist */}
+                            <PasswordStrengthChecklist
+                              password={adminNewPass}
+                              confirmPassword={adminConfirmPass}
+                              currentPassword={adminResetFaculty.password}
+                            />
+
+                            {/* Modal Footer Actions */}
+                            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAdminResetFaculty(null);
+                                  setAdminNewPass('');
+                                  setAdminConfirmPass('');
+                                  setAdminResetMsg({ type: '', text: '' });
+                                }}
+                                className="px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="submit"
+                                disabled={
+                                  savingAdminReset ||
+                                  !evaluatePasswordStrength(adminNewPass).isValid ||
+                                  adminNewPass !== adminConfirmPass ||
+                                  adminNewPass === adminResetFaculty.password
+                                }
+                                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-semibold transition"
+                              >
+                                {savingAdminReset ? 'Saving Password...' : 'Save New Password'}
+                              </button>
+                            </div>
+                          </form>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
                 // ================= TAB 1: INSTRUCTOR CLASS RECORDS =================
                 <>
