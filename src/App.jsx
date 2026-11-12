@@ -4,7 +4,8 @@ import {
   GraduationCap, ShieldCheck, Upload, Download, Search, 
   LogOut, Eye, EyeOff, Trash2, CheckCircle2, AlertCircle, 
   Lock, Pencil, Check, X, Mail, Send, UserCheck, KeyRound, 
-  ArrowLeft, UserPlus, Users, BookOpen, Clock, ShieldAlert
+  ArrowLeft, UserPlus, Users, BookOpen, Clock, ChevronRight,
+  Settings, RefreshCw
 } from 'lucide-react';
 
 // Initialize Supabase Client from your .env file
@@ -18,11 +19,66 @@ const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+const SAVED_INSTRUCTORS_KEY = 'ugp_saved_instructors_v1';
+
 const checkIsTeacherRoute = () => {
   const path = window.location.pathname.toLowerCase();
   const hash = window.location.hash.toLowerCase();
   return path.startsWith('/teacher') || path.startsWith('/admin') || hash.startsWith('#/teacher') || hash.startsWith('#/admin');
 };
+
+// HELPER: Evaluate Password Strength Requirements
+const evaluatePasswordStrength = (pwd = '') => {
+  const checks = {
+    minLength: pwd.length >= 8,
+    hasUpper: /[A-Z]/.test(pwd),
+    hasLower: /[a-z]/.test(pwd),
+    hasNumber: /[0-9]/.test(pwd),
+    hasSpecial: /[!@#$%^&*(),.?":{}|<>_\-+=~`[\]\\;/']/.test(pwd),
+  };
+  const isValid = Object.values(checks).every(Boolean);
+  return { checks, isValid };
+};
+
+// Reusable Live Password Requirements Checklist Component
+function PasswordStrengthChecklist({ password, confirmPassword }) {
+  const { checks } = evaluatePasswordStrength(password);
+  const passwordsMatch = password.length > 0 && password === confirmPassword;
+
+  const items = [
+    { key: 'minLength', label: 'At least 8 characters', met: checks.minLength },
+    { key: 'hasUpper', label: 'Uppercase letter (A-Z)', met: checks.hasUpper },
+    { key: 'hasLower', label: 'Lowercase letter (a-z)', met: checks.hasLower },
+    { key: 'hasNumber', label: 'Number (0-9)', met: checks.hasNumber },
+    { key: 'hasSpecial', label: 'Special character (!@#$%^&*)', met: checks.hasSpecial },
+    { key: 'match', label: 'Passwords match', met: passwordsMatch },
+  ];
+
+  return (
+    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+      <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+        Password Security Requirements
+      </span>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+        {items.map((item) => (
+          <div
+            key={item.key}
+            className={`flex items-center gap-1.5 text-xs font-medium ${
+              item.met ? 'text-emerald-700' : 'text-slate-400'
+            }`}
+          >
+            {item.met ? (
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            ) : (
+              <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />
+            )}
+            <span>{item.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [isTeacherRoute, setIsTeacherRoute] = useState(checkIsTeacherRoute());
@@ -52,22 +108,80 @@ export default function App() {
   const [sendingStudentPin, setSendingStudentPin] = useState(false);
 
   // ================= INSTRUCTOR & SUPER ADMIN STATE =================
-  const [teacherAuthTab, setTeacherAuthTab] = useState('login'); // 'login' | 'signup'
-  const [currentInstructor, setCurrentInstructor] = useState(null); // Logged-in instructor object
-  const [teacherViewTab, setTeacherViewTab] = useState('grades'); // 'grades' | 'faculty' (admin only)
+  const [teacherAuthTab, setTeacherAuthTab] = useState('login'); // 'login' | 'signup' | 'forgot'
+  const [currentInstructor, setCurrentInstructor] = useState(null);
+  const [teacherViewTab, setTeacherViewTab] = useState('grades'); // 'grades' | 'faculty' | 'profile'
 
-  // Login Form
+  // Saved Instructor Accounts in Browser LocalStorage
+  const [savedInstructors, setSavedInstructors] = useState(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_INSTRUCTORS_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [selectedSavedAccount, setSelectedSavedAccount] = useState(null);
+  const [loginMethod, setLoginMethod] = useState('password'); // 'password' | 'pin'
+  const [generatedLoginPin, setGeneratedLoginPin] = useState(null);
+  const [instructorPinInput, setInstructorPinInput] = useState('');
+  const [sendingInstructorPin, setSendingInstructorPin] = useState(false);
+
+  // Standard Login Form
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPass, setShowLoginPass] = useState(false);
   const [teacherAuthError, setTeacherAuthError] = useState('');
   const [teacherAuthSuccess, setTeacherAuthSuccess] = useState('');
   const [loadingAuth, setLoadingAuth] = useState(false);
 
-  // Instructor Signup Form
+  // Self-Service Forgot Password State
+  const [resetEmailInput, setResetEmailInput] = useState('');
+  const [resetStep, setResetStep] = useState(1);
+  const [generatedResetPin, setGeneratedResetPin] = useState(null);
+  const [resetCodeInput, setResetCodeInput] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [showResetPass, setShowResetPass] = useState(false);
+  const [sendingResetPin, setSendingResetPin] = useState(false);
+
+  // Logged-In Instructor Profile & Security Verification State
+  const [profileName, setProfileName] = useState('');
+  const [profileDept, setProfileDept] = useState('');
+  const [profileEmail, setProfileEmail] = useState('');
+  const [profileStatusMsg, setProfileStatusMsg] = useState({ type: '', text: '' });
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  // Profile Update 2-Step Verification State (Password OR Email PIN)
+  const [showProfileVerify, setShowProfileVerify] = useState(false);
+  const [profileVerifyMethod, setProfileVerifyMethod] = useState('password'); // 'password' | 'pin'
+  const [profileVerifyPassword, setProfileVerifyPassword] = useState('');
+  const [showProfileVerifyPass, setShowProfileVerifyPass] = useState(false);
+  const [profileGeneratedPin, setProfileGeneratedPin] = useState(null);
+  const [profileVerifyPinInput, setProfileVerifyPinInput] = useState('');
+  const [sendingProfilePin, setSendingProfilePin] = useState(false);
+
+  // Change Password State
+  const [currentPassInput, setCurrentPassInput] = useState('');
+  const [newPassInput, setNewPassInput] = useState('');
+  const [confirmPassInput, setConfirmPassInput] = useState('');
+  const [showChangePass, setShowChangePass] = useState(false);
+  const [passwordStatusMsg, setPasswordStatusMsg] = useState({ type: '', text: '' });
+  const [savingPassword, setSavingPassword] = useState(false);
+
+  // Super Admin Manual Password Reset State
+  const [adminResetFaculty, setAdminResetFaculty] = useState(null);
+  const [adminNewPass, setAdminNewPass] = useState('');
+  const [savingAdminReset, setSavingAdminReset] = useState(false);
+
+  // Instructor Signup Form (With Confirm Password & Visibility Toggles)
   const [signupName, setSignupName] = useState('');
   const [signupDept, setSignupDept] = useState('CCIT');
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
+  const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
+  const [showSignupPass, setShowSignupPass] = useState(false);
+  const [showSignupConfirmPass, setShowSignupConfirmPass] = useState(false);
 
   // Grades & Faculty List State
   const [allRecords, setAllRecords] = useState([]);
@@ -91,11 +205,43 @@ export default function App() {
   });
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // HELPER: Save Instructor Profile Card to LocalStorage
+  const rememberInstructorOnDevice = (instructor) => {
+    const profileToSave = {
+      id: instructor.id,
+      full_name: instructor.full_name,
+      email: instructor.email.toLowerCase(),
+      department: instructor.department || 'CCIT',
+      role: instructor.role || 'instructor',
+      last_login: new Date().toISOString(),
+    };
+
+    setSavedInstructors((prev) => {
+      const filtered = prev.filter((item) => item.id !== profileToSave.id && item.email !== profileToSave.email);
+      const updated = [profileToSave, ...filtered];
+      localStorage.setItem(SAVED_INSTRUCTORS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  // HELPER: Remove a Saved Instructor Card from This Device
+  const removeSavedInstructor = (emailToRemove, e) => {
+    e.stopPropagation();
+    setSavedInstructors((prev) => {
+      const updated = prev.filter((item) => item.email !== emailToRemove);
+      localStorage.setItem(SAVED_INSTRUCTORS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+    if (selectedSavedAccount?.email === emailToRemove) {
+      setSelectedSavedAccount(null);
+    }
+  };
+
   // HELPER: Send PIN Email via EmailJS REST API
   const sendPinEmail = async (record, targetEmail) => {
     const emailToUse = (targetEmail || record.email || '').trim();
     if (!emailToUse || !emailToUse.includes('@')) {
-      throw new Error(`Please provide a valid Gmail address.`);
+      throw new Error(`Please provide a valid email address.`);
     }
     if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
       throw new Error('Missing EmailJS credentials in .env file.');
@@ -113,7 +259,7 @@ export default function App() {
           student_name: record.full_name,
           student_id: record.student_id,
           pin: record.pin,
-          subject: `${record.subject} (${record.instructor_name || 'Instructor'})`,
+          subject: `${record.subject} (${record.instructor_name || 'Portal Security'})`,
           section: record.section,
         },
       }),
@@ -236,16 +382,38 @@ export default function App() {
   };
 
   // ================= 2. INSTRUCTOR & SUPER ADMIN AUTH =================
+  const completeInstructorLogin = (instructorData) => {
+    rememberInstructorOnDevice(instructorData);
+    setCurrentInstructor(instructorData);
+    setProfileName(instructorData.full_name || '');
+    setProfileDept(instructorData.department || 'CCIT');
+    setProfileEmail(instructorData.email || '');
+    setSelectedSavedAccount(null);
+    setLoginPassword('');
+    setInstructorPinInput('');
+    setGeneratedLoginPin(null);
+    setTeacherViewTab('grades');
+    fetchInstructorRecords(instructorData);
+    if (instructorData.role === 'admin') {
+      fetchFacultyList();
+    }
+  };
+
   const handleInstructorLogin = async (e) => {
     e.preventDefault();
     setTeacherAuthError('');
     setTeacherAuthSuccess('');
     setLoadingAuth(true);
 
+    const emailToUse =
+      selectedSavedAccount && !selectedSavedAccount.isNewManual
+        ? selectedSavedAccount.email
+        : loginEmail.trim().toLowerCase();
+
     const { data, error } = await supabase
       .from('instructors')
       .select('*')
-      .eq('email', loginEmail.trim().toLowerCase())
+      .eq('email', emailToUse)
       .eq('password', loginPassword.trim())
       .maybeSingle();
 
@@ -271,17 +439,441 @@ export default function App() {
       return;
     }
 
+    completeInstructorLogin(data);
+  };
+
+  const handleSendInstructorLoginPin = async () => {
+    if (!selectedSavedAccount) return;
+    setTeacherAuthError('');
+    setTeacherAuthSuccess('');
+    setSendingInstructorPin(true);
+
+    const { data, error } = await supabase
+      .from('instructors')
+      .select('*')
+      .eq('email', selectedSavedAccount.email)
+      .maybeSingle();
+
+    if (error || !data) {
+      setSendingInstructorPin(false);
+      setTeacherAuthError('Account no longer found in the database.');
+      return;
+    }
+
+    if (data.status !== 'approved') {
+      setSendingInstructorPin(false);
+      setTeacherAuthError(`Your account status is currently ${data.status.toUpperCase()}.`);
+      return;
+    }
+
+    const oneTimePin = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedLoginPin(oneTimePin);
+
+    try {
+      await sendPinEmail(
+        {
+          full_name: data.full_name,
+          student_id: `INSTRUCTOR (${data.department})`,
+          pin: oneTimePin,
+          subject: 'Faculty Portal One-Time Login PIN',
+          section: 'Instructor Access',
+          instructor_name: 'University Grade Portal',
+        },
+        data.email
+      );
+      setTeacherAuthSuccess(`A 6-digit login PIN has been sent to ${data.email}!`);
+    } catch (err) {
+      setTeacherAuthError('Failed to send PIN email: ' + err.message);
+    } finally {
+      setSendingInstructorPin(false);
+    }
+  };
+
+  const handleVerifyInstructorPin = async (e) => {
+    e.preventDefault();
+    setTeacherAuthError('');
+
+    if (!generatedLoginPin || instructorPinInput.trim() !== generatedLoginPin) {
+      setTeacherAuthError('Invalid or expired 6-digit PIN. Please check your email and try again.');
+      return;
+    }
+
+    setLoadingAuth(true);
+    const { data, error } = await supabase
+      .from('instructors')
+      .select('*')
+      .eq('email', selectedSavedAccount.email)
+      .maybeSingle();
+
+    setLoadingAuth(false);
+
+    if (error || !data) {
+      setTeacherAuthError('Could not load instructor profile.');
+      return;
+    }
+
+    if (data.status !== 'approved') {
+      setTeacherAuthError('Your account is not approved.');
+      return;
+    }
+
+    completeInstructorLogin(data);
+  };
+
+  // ================= 3. SELF-SERVICE FORGOT PASSWORD FLOW =================
+  const openForgotPasswordFlow = (prefillEmail = '') => {
+    setTeacherAuthTab('forgot');
+    setResetEmailInput(prefillEmail || '');
+    setResetStep(1);
+    setGeneratedResetPin(null);
+    setResetCodeInput('');
+    setResetNewPassword('');
+    setResetConfirmPassword('');
+    setTeacherAuthError('');
+    setTeacherAuthSuccess('');
+  };
+
+  const handleSendPasswordResetCode = async (e) => {
+    e.preventDefault();
+    setTeacherAuthError('');
+    setTeacherAuthSuccess('');
+
+    const cleanEmail = resetEmailInput.trim().toLowerCase();
+    if (!cleanEmail) return;
+
+    setSendingResetPin(true);
+
+    const { data, error } = await supabase
+      .from('instructors')
+      .select('*')
+      .eq('email', cleanEmail)
+      .maybeSingle();
+
+    if (error || !data) {
+      setSendingResetPin(false);
+      setTeacherAuthError('No instructor account found with that email address.');
+      return;
+    }
+
+    const resetPin = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedResetPin(resetPin);
+
+    try {
+      await sendPinEmail(
+        {
+          full_name: data.full_name,
+          student_id: `PASSWORD RESET (${data.department})`,
+          pin: resetPin,
+          subject: 'Instructor Password Reset Code',
+          section: 'Security Verification',
+          instructor_name: 'University Grade Portal',
+        },
+        data.email
+      );
+      setResetStep(2);
+      setTeacherAuthSuccess(`We sent a 6-digit verification code to ${data.email}.`);
+    } catch (err) {
+      setTeacherAuthError('Failed to send reset email: ' + err.message);
+    } finally {
+      setSendingResetPin(false);
+    }
+  };
+
+  const handleCompletePasswordReset = async (e) => {
+    e.preventDefault();
+    setTeacherAuthError('');
+    setTeacherAuthSuccess('');
+
+    if (!generatedResetPin || resetCodeInput.trim() !== generatedResetPin) {
+      setTeacherAuthError('Invalid 6-digit verification code. Please check your email.');
+      return;
+    }
+
+    const { isValid } = evaluatePasswordStrength(resetNewPassword);
+    if (!isValid) {
+      setTeacherAuthError(
+        'Password does not meet all security requirements (8+ chars, uppercase, lowercase, number, and special character).'
+      );
+      return;
+    }
+
+    if (resetNewPassword !== resetConfirmPassword) {
+      setTeacherAuthError('New password and confirm password do not match.');
+      return;
+    }
+
+    setLoadingAuth(true);
+    const { error } = await supabase
+      .from('instructors')
+      .update({ password: resetNewPassword })
+      .eq('email', resetEmailInput.trim().toLowerCase());
+
+    setLoadingAuth(false);
+
+    if (error) {
+      setTeacherAuthError('Failed to reset password: ' + error.message);
+      return;
+    }
+
+    setTeacherAuthSuccess('Password updated! You can now sign in with your new password.');
+    setLoginEmail(resetEmailInput.trim().toLowerCase());
+    setLoginPassword('');
+    setTeacherAuthTab('login');
+  };
+
+  // ================= 4. LOGGED-IN INSTRUCTOR PROFILE (WITH 2-STEP PASSWORD / PIN VERIFICATION) =================
+  const handleInitiateProfileSave = (e) => {
+    e.preventDefault();
+    if (!currentInstructor) return;
+    setProfileStatusMsg({ type: '', text: '' });
+
+    const cleanName = profileName.trim().toUpperCase();
+    const cleanDept = profileDept.trim() || 'CCIT';
+    const cleanEmail = profileEmail.trim().toLowerCase();
+
+    if (!cleanEmail.includes('@')) {
+      setProfileStatusMsg({ type: 'error', text: 'Please enter a valid email address.' });
+      return;
+    }
+
+    const hasChanges =
+      cleanName !== currentInstructor.full_name ||
+      cleanDept !== (currentInstructor.department || 'CCIT') ||
+      cleanEmail !== currentInstructor.email.toLowerCase();
+
+    if (!hasChanges) {
+      setProfileStatusMsg({ type: 'error', text: 'No changes were made to your profile.' });
+      return;
+    }
+
+    // Open the 2-Step Verification Gate before saving
+    setShowProfileVerify(true);
+    setProfileVerifyMethod('password');
+    setProfileVerifyPassword('');
+    setProfileGeneratedPin(null);
+    setProfileVerifyPinInput('');
+  };
+
+  // Send 6-Digit Verification PIN to the Instructor's CURRENT Registered Email
+  const handleSendProfileVerifyPin = async () => {
+    if (!currentInstructor) return;
+    setProfileStatusMsg({ type: '', text: '' });
+    setSendingProfilePin(true);
+
+    const oneTimePin = Math.floor(100000 + Math.random() * 900000).toString();
+    setProfileGeneratedPin(oneTimePin);
+
+    try {
+      await sendPinEmail(
+        {
+          full_name: currentInstructor.full_name,
+          student_id: `PROFILE CHANGE (${currentInstructor.department})`,
+          pin: oneTimePin,
+          subject: 'Verify Profile / Email Update',
+          section: 'Account Security',
+          instructor_name: 'University Grade Portal',
+        },
+        currentInstructor.email
+      );
+      setProfileStatusMsg({
+        type: 'success',
+        text: `A 6-digit verification PIN has been sent to ${currentInstructor.email}.`,
+      });
+    } catch (err) {
+      setProfileStatusMsg({
+        type: 'error',
+        text: 'Failed to send verification PIN: ' + err.message,
+      });
+    } finally {
+      setSendingProfilePin(false);
+    }
+  };
+
+  // Verify Password or 6-Digit PIN and Commit Profile Changes to Supabase
+  const handleConfirmAndSaveProfile = async (e) => {
+    e.preventDefault();
+    if (!currentInstructor) return;
+    setProfileStatusMsg({ type: '', text: '' });
+
+    // 1. Validate chosen verification method
+    if (profileVerifyMethod === 'password') {
+      if (!profileVerifyPassword) {
+        setProfileStatusMsg({ type: 'error', text: 'Please enter your current password to confirm.' });
+        return;
+      }
+
+      // Check password against Supabase directly for maximum security
+      const { data: authCheck, error: authErr } = await supabase
+        .from('instructors')
+        .select('id')
+        .eq('id', currentInstructor.id)
+        .eq('password', profileVerifyPassword)
+        .maybeSingle();
+
+      if (authErr || !authCheck) {
+        setProfileStatusMsg({
+          type: 'error',
+          text: 'Incorrect password. Profile changes were not saved.',
+        });
+        return;
+      }
+    } else {
+      // Verify 6-Digit Email PIN
+      if (!profileGeneratedPin || profileVerifyPinInput.trim() !== profileGeneratedPin) {
+        setProfileStatusMsg({
+          type: 'error',
+          text: 'Invalid 6-digit verification PIN. Please check your email and try again.',
+        });
+        return;
+      }
+    }
+
+    // 2. Verification passed -> Update Profile in Supabase
+    setSavingProfile(true);
+    const cleanName = profileName.trim().toUpperCase();
+    const cleanDept = profileDept.trim() || 'CCIT';
+    const cleanEmail = profileEmail.trim().toLowerCase();
+
+    const { data, error } = await supabase
+      .from('instructors')
+      .update({
+        full_name: cleanName,
+        department: cleanDept,
+        email: cleanEmail,
+      })
+      .eq('id', currentInstructor.id)
+      .select()
+      .single();
+
+    if (error) {
+      setSavingProfile(false);
+      setProfileStatusMsg({
+        type: 'error',
+        text: error.message.includes('unique')
+          ? 'That email is already in use by another instructor.'
+          : 'Failed to update profile: ' + error.message,
+      });
+      return;
+    }
+
+    // Sync updated instructor name across all student grade records
+    if (cleanName !== currentInstructor.full_name) {
+      await supabase
+        .from('student_grades')
+        .update({ instructor_name: cleanName })
+        .eq('instructor_id', currentInstructor.id);
+    }
+
+    setSavingProfile(false);
+    setShowProfileVerify(false);
+    setProfileVerifyPassword('');
+    setProfileGeneratedPin(null);
+    setProfileVerifyPinInput('');
     setCurrentInstructor(data);
+    rememberInstructorOnDevice(data);
     fetchInstructorRecords(data);
-    if (data.role === 'admin') {
+    setProfileStatusMsg({
+      type: 'success',
+      text: 'Identity verified! Your profile and login email have been updated.',
+    });
+  };
+
+  const handleUpdateInstructorPassword = async (e) => {
+    e.preventDefault();
+    if (!currentInstructor) return;
+    setPasswordStatusMsg({ type: '', text: '' });
+
+    if (currentPassInput !== currentInstructor.password) {
+      setPasswordStatusMsg({ type: 'error', text: 'Your current password is incorrect.' });
+      return;
+    }
+
+    const { isValid } = evaluatePasswordStrength(newPassInput);
+    if (!isValid) {
+      setPasswordStatusMsg({
+        type: 'error',
+        text: 'New password must meet all security requirements (8+ chars, uppercase, lowercase, number, and special character).',
+      });
+      return;
+    }
+
+    if (newPassInput !== confirmPassInput) {
+      setPasswordStatusMsg({ type: 'error', text: 'New password and confirmation do not match.' });
+      return;
+    }
+
+    setSavingPassword(true);
+    const { data, error } = await supabase
+      .from('instructors')
+      .update({ password: newPassInput })
+      .eq('id', currentInstructor.id)
+      .select()
+      .single();
+
+    setSavingPassword(false);
+
+    if (error) {
+      setPasswordStatusMsg({ type: 'error', text: 'Error updating password: ' + error.message });
+      return;
+    }
+
+    setCurrentInstructor(data);
+    setCurrentPassInput('');
+    setNewPassInput('');
+    setConfirmPassInput('');
+    setPasswordStatusMsg({ type: 'success', text: 'Your password has been changed successfully!' });
+  };
+
+  // Super Admin: Direct Password Reset for Any Instructor
+  const handleAdminResetFacultyPassword = async (e) => {
+    e.preventDefault();
+    if (!adminResetFaculty || !adminNewPass.trim()) return;
+
+    const { isValid } = evaluatePasswordStrength(adminNewPass.trim());
+    if (!isValid) {
+      alert(
+        'Please enter a strong password (at least 8 characters, with uppercase, lowercase, number, and special character).'
+      );
+      return;
+    }
+
+    setSavingAdminReset(true);
+    const { error } = await supabase
+      .from('instructors')
+      .update({ password: adminNewPass.trim() })
+      .eq('id', adminResetFaculty.id);
+
+    setSavingAdminReset(false);
+
+    if (error) {
+      alert('Failed to reset password: ' + error.message);
+    } else {
+      alert(`Password for ${adminResetFaculty.full_name} has been reset to: ${adminNewPass.trim()}`);
+      setAdminResetFaculty(null);
+      setAdminNewPass('');
       fetchFacultyList();
     }
   };
 
+  // ================= 5. INSTRUCTOR SIGNUP (WITH STRONG PASSWORD & CONFIRMATION) =================
   const handleInstructorSignup = async (e) => {
     e.preventDefault();
     setTeacherAuthError('');
     setTeacherAuthSuccess('');
+
+    const { isValid } = evaluatePasswordStrength(signupPassword);
+    if (!isValid) {
+      setTeacherAuthError(
+        'Please make sure your password meets all security requirements (at least 8 characters, uppercase, lowercase, number, and special character).'
+      );
+      return;
+    }
+
+    if (signupPassword !== signupConfirmPassword) {
+      setTeacherAuthError('Passwords do not match. Please re-enter your confirmation password.');
+      return;
+    }
+
     setLoadingAuth(true);
 
     const cleanEmail = signupEmail.trim().toLowerCase();
@@ -292,7 +884,7 @@ export default function App() {
         full_name: cleanName,
         department: signupDept.trim() || 'CCIT',
         email: cleanEmail,
-        password: signupPassword.trim(),
+        password: signupPassword,
         role: 'instructor',
         status: 'pending',
       },
@@ -315,10 +907,10 @@ export default function App() {
     setSignupName('');
     setSignupEmail('');
     setSignupPassword('');
+    setSignupConfirmPassword('');
     setTeacherAuthTab('login');
   };
 
-  // Fetch only the logged-in instructor's student records
   const fetchInstructorRecords = async (instructor = currentInstructor) => {
     if (!instructor) return;
     setLoadingTeacher(true);
@@ -337,7 +929,6 @@ export default function App() {
     setLoadingTeacher(false);
   };
 
-  // Super Admin: Fetch all instructors for approval management
   const fetchFacultyList = async () => {
     const { data, error } = await supabase
       .from('instructors')
@@ -349,7 +940,6 @@ export default function App() {
     }
   };
 
-  // Super Admin: Approve or Reject an Instructor
   const handleUpdateFacultyStatus = async (facultyId, newStatus) => {
     const { error } = await supabase
       .from('instructors')
@@ -373,7 +963,6 @@ export default function App() {
     fetchFacultyList();
   };
 
-  // 3. DOWNLOAD CSV TEMPLATE
   const downloadTemplate = () => {
     const csvContent = [
       'Student ID,Full Name,PIN,Subject,Section,Midterm Grade,Final Grade,Breakdown,Remarks',
@@ -389,7 +978,6 @@ export default function App() {
     a.click();
   };
 
-  // 4. BULK CSV UPLOAD TO SUPABASE (Automatically attaches currentInstructor.id & full_name)
   const handleCsvUpload = async (e) => {
     const file = e.target.files[0];
     if (!file || !currentInstructor) return;
@@ -486,7 +1074,6 @@ export default function App() {
     return currentRemarks;
   };
 
-  // 5. START EDITING A STUDENT RECORD
   const startEdit = (rec) => {
     setEditingId(rec.id);
     setEditForm({
@@ -499,7 +1086,6 @@ export default function App() {
     });
   };
 
-  // 6. SAVE EDITED GRADE & GMAIL TO SUPABASE
   const handleSaveEdit = async (id) => {
     setSavingEdit(true);
     const updatedFields = {
@@ -531,7 +1117,6 @@ export default function App() {
     }
   };
 
-  // 7. TEACHER: RESEND PIN TO ONE STUDENT
   const handleSendSinglePin = async (rec) => {
     setSendingEmailId(rec.id);
     try {
@@ -544,7 +1129,6 @@ export default function App() {
     }
   };
 
-  // 8. DELETE RECORD
   const handleDeleteRecord = async (id) => {
     if (!window.confirm('Delete this student grade record?')) return;
     await supabase
@@ -570,6 +1154,14 @@ export default function App() {
 
   const pendingFacultyCount = facultyList.filter((f) => f.status === 'pending').length;
 
+  const getInitials = (name) => {
+    if (!name) return 'IN';
+    const parts = name.trim().split(' ');
+    return parts.length > 1
+      ? `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+      : name.slice(0, 2).toUpperCase();
+  };
+
   // ============================================================================
   // SEPARATE PAGE 1: TEACHER & SUPER ADMIN PORTAL (/#/teacher)
   // ============================================================================
@@ -584,7 +1176,7 @@ export default function App() {
                 <h1 className="font-bold text-lg leading-tight">Faculty & Admin Portal</h1>
                 <p className="text-xs text-slate-400">
                   {currentInstructor
-                    ? `Logged in: ${currentInstructor.full_name} (${currentInstructor.role.toUpperCase()})`
+                    ? `Logged in: ${currentInstructor.full_name} (${currentInstructor.department} • ${currentInstructor.role.toUpperCase()})`
                     : 'University Grade Management System'}
                 </p>
               </div>
@@ -611,7 +1203,7 @@ export default function App() {
                   className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600 hover:bg-red-700 text-white flex items-center gap-1.5 transition"
                 >
                   <LogOut className="w-4 h-4" />
-                  Sign Out
+                  Switch / Lock Account
                 </button>
               )}
             </div>
@@ -620,8 +1212,8 @@ export default function App() {
 
         <main className="max-w-7xl mx-auto px-4 py-8">
           {!currentInstructor ? (
-            // ================= INSTRUCTOR LOGIN / SIGNUP CARD =================
-            <div className="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-8">
+            // ================= INSTRUCTOR LOGIN / SAVED CARDS / FORGOT / SIGNUP =================
+            <div className="max-w-md mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-6">
               <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50">
                 <button
                   type="button"
@@ -630,7 +1222,7 @@ export default function App() {
                     setTeacherAuthError('');
                   }}
                   className={`py-3.5 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 border-b-2 transition ${
-                    teacherAuthTab === 'login'
+                    teacherAuthTab === 'login' || teacherAuthTab === 'forgot'
                       ? 'border-indigo-600 text-slate-900 bg-white'
                       : 'border-transparent text-slate-500 hover:text-slate-700'
                   }`}
@@ -671,49 +1263,426 @@ export default function App() {
                   </div>
                 )}
 
-                {teacherAuthTab === 'login' ? (
-                  <>
-                    <h2 className="text-xl font-bold text-slate-900 mb-1">Faculty Sign In</h2>
-                    <p className="text-sm text-slate-500 mb-6">
-                      Log in with your approved instructor email and password.
+                {/* VIEW 0: SELF-SERVICE FORGOT PASSWORD FLOW */}
+                {teacherAuthTab === 'forgot' && (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTeacherAuthTab('login');
+                        setTeacherAuthError('');
+                        setTeacherAuthSuccess('');
+                      }}
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-800 flex items-center gap-1 mb-4"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" /> Back to Sign In
+                    </button>
+
+                    <h2 className="text-xl font-bold text-slate-900 mb-1">Reset Instructor Password</h2>
+                    <p className="text-sm text-slate-500 mb-5">
+                      {resetStep === 1
+                        ? 'Enter your registered faculty email to receive a 6-digit password reset code.'
+                        : 'Enter the 6-digit code sent to your email and create a strong new password.'}
                     </p>
-                    <form onSubmit={handleInstructorLogin} className="space-y-4">
-                      <div>
-                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                          Instructor Email
-                        </label>
-                        <input
-                          type="email"
-                          required
-                          placeholder="instructor@unp.edu.ph"
-                          value={loginEmail}
-                          onChange={(e) => setLoginEmail(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+
+                    {resetStep === 1 ? (
+                      <form onSubmit={handleSendPasswordResetCode} className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                            Registered Instructor Email
+                          </label>
+                          <input
+                            type="email"
+                            required
+                            placeholder="instructor@unp.edu.ph"
+                            value={resetEmailInput}
+                            onChange={(e) => setResetEmailInput(e.target.value)}
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={sendingResetPin}
+                          className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition"
+                        >
+                          <Send className="w-4 h-4" />
+                          {sendingResetPin ? 'Sending Verification Code...' : 'Send 6-Digit Reset Code'}
+                        </button>
+                      </form>
+                    ) : (
+                      <form onSubmit={handleCompletePasswordReset} className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                            6-Digit Verification Code
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            maxLength={6}
+                            placeholder="e.g., 482910"
+                            value={resetCodeInput}
+                            onChange={(e) => setResetCodeInput(e.target.value)}
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-center font-mono text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                            New Password
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showResetPass ? 'text' : 'password'}
+                              required
+                              placeholder="Create strong password"
+                              value={resetNewPassword}
+                              onChange={(e) => setResetNewPassword(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowResetPass(!showResetPass)}
+                              className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+                            >
+                              {showResetPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                            Confirm New Password
+                          </label>
+                          <input
+                            type={showResetPass ? 'text' : 'password'}
+                            required
+                            placeholder="Re-enter new password"
+                            value={resetConfirmPassword}
+                            onChange={(e) => setResetConfirmPassword(e.target.value)}
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                        </div>
+
+                        <PasswordStrengthChecklist
+                          password={resetNewPassword}
+                          confirmPassword={resetConfirmPassword}
                         />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                          Password
-                        </label>
-                        <input
-                          type="password"
-                          required
-                          placeholder="Enter password"
-                          value={loginPassword}
-                          onChange={(e) => setLoginPassword(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                        />
-                      </div>
+
+                        <button
+                          type="submit"
+                          disabled={loadingAuth}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg transition"
+                        >
+                          {loadingAuth ? 'Updating Password...' : 'Save New Password'}
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                )}
+
+                {teacherAuthTab === 'login' ? (
+                  selectedSavedAccount && !selectedSavedAccount.isNewManual ? (
+                    // VIEW A: SAVED ACCOUNT SELECTED
+                    <div>
                       <button
-                        type="submit"
-                        disabled={loadingAuth}
-                        className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-lg transition"
+                        type="button"
+                        onClick={() => {
+                          setSelectedSavedAccount(null);
+                          setTeacherAuthError('');
+                          setTeacherAuthSuccess('');
+                          setGeneratedLoginPin(null);
+                          setInstructorPinInput('');
+                        }}
+                        className="text-xs font-semibold text-slate-500 hover:text-slate-800 flex items-center gap-1 mb-4"
                       >
-                        {loadingAuth ? 'Signing In...' : 'Sign In to Dashboard'}
+                        <ArrowLeft className="w-3.5 h-3.5" /> Choose another account
                       </button>
-                    </form>
-                  </>
-                ) : (
+
+                      <div className="flex items-center gap-3.5 p-3.5 rounded-xl bg-slate-50 border border-slate-200 mb-5">
+                        <div className="w-11 h-11 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-sm shrink-0">
+                          {getInitials(selectedSavedAccount.full_name)}
+                        </div>
+                        <div className="overflow-hidden">
+                          <h3 className="font-bold text-slate-900 text-sm truncate">
+                            {selectedSavedAccount.full_name}
+                          </h3>
+                          <p className="text-xs text-slate-500 truncate">{selectedSavedAccount.email}</p>
+                          <span className="inline-block mt-0.5 text-[10px] font-bold uppercase px-2 py-0.2 rounded bg-indigo-50 text-indigo-700">
+                            {selectedSavedAccount.department} • {selectedSavedAccount.role}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl mb-5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLoginMethod('password');
+                            setTeacherAuthError('');
+                          }}
+                          className={`py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                            loginMethod === 'password'
+                              ? 'bg-white text-slate-900 shadow-sm'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          <Lock className="w-3.5 h-3.5" />
+                          Use Password
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLoginMethod('pin');
+                            setTeacherAuthError('');
+                          }}
+                          className={`py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                            loginMethod === 'pin'
+                              ? 'bg-white text-slate-900 shadow-sm'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                          Email Me a PIN
+                        </button>
+                      </div>
+
+                      {loginMethod === 'password' ? (
+                        <form onSubmit={handleInstructorLogin} className="space-y-4">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-xs font-semibold uppercase text-slate-600">
+                                Instructor Password
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => openForgotPasswordFlow(selectedSavedAccount.email)}
+                                className="text-xs font-semibold text-indigo-600 hover:underline"
+                              >
+                                Forgot password?
+                              </button>
+                            </div>
+                            <div className="relative">
+                              <input
+                                type={showLoginPass ? 'text' : 'password'}
+                                required
+                                autoFocus
+                                placeholder="Enter your password"
+                                value={loginPassword}
+                                onChange={(e) => setLoginPassword(e.target.value)}
+                                className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowLoginPass(!showLoginPass)}
+                                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+                              >
+                                {showLoginPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                              </button>
+                            </div>
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={loadingAuth}
+                            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-lg transition"
+                          >
+                            {loadingAuth ? 'Signing In...' : 'Sign In with Password'}
+                          </button>
+                        </form>
+                      ) : (
+                        <div className="space-y-4">
+                          {!generatedLoginPin ? (
+                            <div className="text-center py-2">
+                              <p className="text-xs text-slate-600 mb-4">
+                                We will send a one-time 6-digit login PIN to{' '}
+                                <strong className="text-slate-900">{selectedSavedAccount.email}</strong>.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={handleSendInstructorLoginPin}
+                                disabled={sendingInstructorPin}
+                                className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition"
+                              >
+                                <Send className="w-4 h-4" />
+                                {sendingInstructorPin ? 'Sending PIN to Email...' : 'Send 6-Digit PIN to My Email'}
+                              </button>
+                            </div>
+                          ) : (
+                            <form onSubmit={handleVerifyInstructorPin} className="space-y-4">
+                              <div>
+                                <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                                  Enter 6-Digit Email PIN
+                                </label>
+                                <input
+                                  type="text"
+                                  required
+                                  autoFocus
+                                  maxLength={6}
+                                  placeholder="e.g., 482910"
+                                  value={instructorPinInput}
+                                  onChange={(e) => setInstructorPinInput(e.target.value)}
+                                  className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-center font-mono text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                                />
+                              </div>
+                              <button
+                                type="submit"
+                                disabled={loadingAuth}
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg transition"
+                              >
+                                {loadingAuth ? 'Verifying PIN...' : 'Verify PIN & Sign In'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSendInstructorLoginPin}
+                                disabled={sendingInstructorPin}
+                                className="w-full text-xs text-indigo-600 hover:underline font-medium"
+                              >
+                                {sendingInstructorPin ? 'Resending...' : 'Resend PIN to my email'}
+                              </button>
+                            </form>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : savedInstructors.length > 0 && !selectedSavedAccount?.isNewManual ? (
+                    // VIEW B: SAVED ACCOUNT CARDS LIST
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900 mb-1">Welcome Back</h2>
+                      <p className="text-sm text-slate-500 mb-5">
+                        Select your saved faculty account to sign in quickly.
+                      </p>
+
+                      <div className="space-y-2.5 mb-5">
+                        {savedInstructors.map((acc) => (
+                          <div
+                            key={acc.email}
+                            onClick={() => {
+                              setSelectedSavedAccount(acc);
+                              setLoginMethod('password');
+                              setTeacherAuthError('');
+                              setTeacherAuthSuccess('');
+                            }}
+                            className="group flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/40 cursor-pointer transition"
+                          >
+                            <div className="flex items-center gap-3 overflow-hidden">
+                              <div className="w-10 h-10 rounded-full bg-slate-900 group-hover:bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shrink-0 transition">
+                                {getInitials(acc.full_name)}
+                              </div>
+                              <div className="overflow-hidden">
+                                <h3 className="font-bold text-slate-900 text-sm truncate">{acc.full_name}</h3>
+                                <p className="text-xs text-slate-500 truncate">{acc.email}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => removeSavedInstructor(acc.email, e)}
+                                className="p-1.5 text-slate-300 hover:text-red-500 rounded-lg hover:bg-red-50 transition"
+                                title="Forget this account on this device"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600" />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedSavedAccount({ isNewManual: true });
+                        }}
+                        className="w-full py-2.5 px-4 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 text-xs font-semibold text-slate-600 hover:text-indigo-700 flex items-center justify-center gap-1.5 transition"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        Use another instructor account
+                      </button>
+                    </div>
+                  ) : null
+                ) : null}
+
+                {/* VIEW C: STANDARD MANUAL EMAIL + PASSWORD LOGIN */}
+                {teacherAuthTab === 'login' &&
+                  (savedInstructors.length === 0 || selectedSavedAccount?.isNewManual) && (
+                    <div>
+                      {savedInstructors.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedSavedAccount(null);
+                            setTeacherAuthError('');
+                          }}
+                          className="text-xs font-semibold text-slate-500 hover:text-slate-800 flex items-center gap-1 mb-4"
+                        >
+                          <ArrowLeft className="w-3.5 h-3.5" /> Back to saved accounts
+                        </button>
+                      )}
+                      <h2 className="text-xl font-bold text-slate-900 mb-1">Faculty Sign In</h2>
+                      <p className="text-sm text-slate-500 mb-6">
+                        Log in with your approved instructor email and password.
+                      </p>
+                      <form
+                        onSubmit={(e) => {
+                          setSelectedSavedAccount(null);
+                          handleInstructorLogin(e);
+                        }}
+                        className="space-y-4"
+                      >
+                        <div>
+                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                            Instructor Email
+                          </label>
+                          <input
+                            type="email"
+                            required
+                            placeholder="instructor@unp.edu.ph"
+                            value={loginEmail}
+                            onChange={(e) => setLoginEmail(e.target.value)}
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-xs font-semibold uppercase text-slate-600">
+                              Password
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => openForgotPasswordFlow(loginEmail)}
+                              className="text-xs font-semibold text-indigo-600 hover:underline"
+                            >
+                              Forgot password?
+                            </button>
+                          </div>
+                          <div className="relative">
+                            <input
+                              type={showLoginPass ? 'text' : 'password'}
+                              required
+                              placeholder="Enter password"
+                              value={loginPassword}
+                              onChange={(e) => setLoginPassword(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowLoginPass(!showLoginPass)}
+                              className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+                            >
+                              {showLoginPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                            </button>
+                          </div>
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={loadingAuth}
+                          className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-lg transition"
+                        >
+                          {loadingAuth ? 'Signing In...' : 'Sign In to Dashboard'}
+                        </button>
+                      </form>
+                    </div>
+                  )}
+
+                {/* VIEW D: REQUEST NEW INSTRUCTOR ACCOUNT */}
+                {teacherAuthTab === 'signup' && (
                   <>
                     <h2 className="text-xl font-bold text-slate-900 mb-1">Request Instructor Account</h2>
                     <p className="text-sm text-slate-500 mb-6">
@@ -761,21 +1730,63 @@ export default function App() {
                       </div>
                       <div>
                         <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-                          Create Password
+                          Create Strong Password
                         </label>
-                        <input
-                          type="password"
-                          required
-                          placeholder="Create a strong password"
-                          value={signupPassword}
-                          onChange={(e) => setSignupPassword(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                        />
+                        <div className="relative">
+                          <input
+                            type={showSignupPass ? 'text' : 'password'}
+                            required
+                            placeholder="Enter strong password"
+                            value={signupPassword}
+                            onChange={(e) => setSignupPassword(e.target.value)}
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowSignupPass(!showSignupPass)}
+                            className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+                          >
+                            {showSignupPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                          </button>
+                        </div>
                       </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                          Confirm Password
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showSignupConfirmPass ? 'text' : 'password'}
+                            required
+                            placeholder="Re-enter your password"
+                            value={signupConfirmPassword}
+                            onChange={(e) => setSignupConfirmPassword(e.target.value)}
+                            className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowSignupConfirmPass(!showSignupConfirmPass)}
+                            className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+                          >
+                            {showSignupConfirmPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      <PasswordStrengthChecklist
+                        password={signupPassword}
+                        confirmPassword={signupConfirmPassword}
+                      />
+
                       <button
                         type="submit"
-                        disabled={loadingAuth}
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition"
+                        disabled={
+                          loadingAuth ||
+                          !evaluatePasswordStrength(signupPassword).isValid ||
+                          signupPassword !== signupConfirmPassword
+                        }
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg transition"
                       >
                         {loadingAuth ? 'Submitting Request...' : 'Submit Account Request'}
                       </button>
@@ -787,20 +1798,20 @@ export default function App() {
           ) : (
             // ================= LOGGED-IN INSTRUCTOR / SUPER ADMIN DASHBOARD =================
             <div className="space-y-6">
-              {/* Super Admin Navigation Bar (Switch between My Class Grades & Faculty Approvals) */}
-              {currentInstructor.role === 'admin' && (
-                <div className="flex flex-wrap gap-3 border-b border-slate-200 pb-4">
-                  <button
-                    onClick={() => setTeacherViewTab('grades')}
-                    className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition ${
-                      teacherViewTab === 'grades'
-                        ? 'bg-slate-900 text-white shadow-sm'
-                        : 'bg-white text-slate-600 hover:bg-slate-200/60 border border-slate-200'
-                    }`}
-                  >
-                    <BookOpen className="w-4 h-4" />
-                    My Class Records ({allRecords.length})
-                  </button>
+              <div className="flex flex-wrap gap-3 border-b border-slate-200 pb-4">
+                <button
+                  onClick={() => setTeacherViewTab('grades')}
+                  className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition ${
+                    teacherViewTab === 'grades'
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'bg-white text-slate-600 hover:bg-slate-200/60 border border-slate-200'
+                  }`}
+                >
+                  <BookOpen className="w-4 h-4" />
+                  My Class Records ({allRecords.length})
+                </button>
+
+                {currentInstructor.role === 'admin' && (
                   <button
                     onClick={() => {
                       setTeacherViewTab('faculty');
@@ -820,18 +1831,417 @@ export default function App() {
                       </span>
                     )}
                   </button>
-                </div>
-              )}
+                )}
 
-              {teacherViewTab === 'faculty' && currentInstructor.role === 'admin' ? (
-                // ================= SUPER ADMIN: FACULTY APPROVAL TABLE =================
+                <button
+                  onClick={() => {
+                    setTeacherViewTab('profile');
+                    setProfileName(currentInstructor.full_name || '');
+                    setProfileDept(currentInstructor.department || 'CCIT');
+                    setProfileEmail(currentInstructor.email || '');
+                    setShowProfileVerify(false);
+                    setProfileStatusMsg({ type: '', text: '' });
+                    setPasswordStatusMsg({ type: '', text: '' });
+                  }}
+                  className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition ${
+                    teacherViewTab === 'profile'
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'bg-white text-slate-600 hover:bg-slate-200/60 border border-slate-200'
+                  }`}
+                >
+                  <Settings className="w-4 h-4" />
+                  Account & Password Settings
+                </button>
+              </div>
+
+              {teacherViewTab === 'profile' ? (
+                // ================= TAB 3: INSTRUCTOR PROFILE & PASSWORD SETTINGS =================
+                <div className="grid gap-6 md:grid-cols-2">
+                  {/* Card 1: Profile Details (Protected by Password or Email PIN Verification) */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                    <div className="flex items-center gap-2.5 mb-1">
+                      <UserCheck className="w-5 h-5 text-indigo-600" />
+                      <h2 className="text-lg font-bold text-slate-900">Instructor Profile</h2>
+                    </div>
+                    <p className="text-xs text-slate-500 mb-5">
+                      For your security, any change to your profile or login email requires verification via your password or a 6-digit email PIN.
+                    </p>
+
+                    {profileStatusMsg.text && (
+                      <div
+                        className={`mb-4 p-3 rounded-lg text-xs font-medium flex items-center gap-2 ${
+                          profileStatusMsg.type === 'error'
+                            ? 'bg-red-50 text-red-700 border border-red-200'
+                            : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                        }`}
+                      >
+                        {profileStatusMsg.type === 'error' ? (
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                        )}
+                        <span>{profileStatusMsg.text}</span>
+                      </div>
+                    )}
+
+                    {!showProfileVerify ? (
+                      // STEP 1: EDIT PROFILE FIELDS
+                      <form onSubmit={handleInitiateProfileSave} className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                            Full Name (Displayed on Student Cards)
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={profileName}
+                            onChange={(e) => setProfileName(e.target.value)}
+                            className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                            College / Department
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={profileDept}
+                            onChange={(e) => setProfileDept(e.target.value)}
+                            className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                            Login Email Address
+                          </label>
+                          <input
+                            type="email"
+                            required
+                            value={profileEmail}
+                            onChange={(e) => setProfileEmail(e.target.value)}
+                            className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                        >
+                          Save Profile Changes
+                        </button>
+                      </form>
+                    ) : (
+                      // STEP 2: SECURITY GATE (CHOOSE PASSWORD OR EMAIL PIN TO CONFIRM PROFILE EDIT)
+                      <div className="p-4 rounded-xl bg-slate-50 border border-indigo-200 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
+                            <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                            Verify Identity to Save Changes
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowProfileVerify(false);
+                              setProfileStatusMsg({ type: '', text: '' });
+                            }}
+                            className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+
+                        {/* Summary of pending changes */}
+                        <div className="p-3 rounded-lg bg-white border border-slate-200 text-xs space-y-1 text-slate-600">
+                          <div>
+                            <strong>New Name:</strong> {profileName.trim().toUpperCase()}
+                          </div>
+                          <div>
+                            <strong>New Department:</strong> {profileDept.trim() || 'CCIT'}
+                          </div>
+                          <div>
+                            <strong>New Login Email:</strong>{' '}
+                            <span className="font-mono text-indigo-700 font-semibold">
+                              {profileEmail.trim().toLowerCase()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Toggle: Verify via Password vs. Verify via 6-Digit Email PIN */}
+                        <div className="grid grid-cols-2 gap-2 p-1 bg-slate-200/70 rounded-xl">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setProfileVerifyMethod('password');
+                              setProfileStatusMsg({ type: '', text: '' });
+                            }}
+                            className={`py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                              profileVerifyMethod === 'password'
+                                ? 'bg-white text-slate-900 shadow-sm'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <Lock className="w-3.5 h-3.5" />
+                            Use Password
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setProfileVerifyMethod('pin');
+                              setProfileStatusMsg({ type: '', text: '' });
+                            }}
+                            className={`py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                              profileVerifyMethod === 'pin'
+                                ? 'bg-white text-slate-900 shadow-sm'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                            Email PIN
+                          </button>
+                        </div>
+
+                        {profileVerifyMethod === 'password' ? (
+                          <form onSubmit={handleConfirmAndSaveProfile} className="space-y-3">
+                            <div>
+                              <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                                Enter Current Password to Confirm
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type={showProfileVerifyPass ? 'text' : 'password'}
+                                  required
+                                  autoFocus
+                                  placeholder="Enter your current password"
+                                  value={profileVerifyPassword}
+                                  onChange={(e) => setProfileVerifyPassword(e.target.value)}
+                                  className="w-full px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowProfileVerifyPass(!showProfileVerifyPass)}
+                                  className="absolute right-3 top-2 text-slate-400 hover:text-slate-600"
+                                >
+                                  {showProfileVerifyPass ? (
+                                    <EyeOff className="w-4 h-4" />
+                                  ) : (
+                                    <Eye className="w-4 h-4" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                            <button
+                              type="submit"
+                              disabled={savingProfile}
+                              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                            >
+                              {savingProfile ? 'Verifying & Saving...' : 'Confirm & Save Profile Changes'}
+                            </button>
+                          </form>
+                        ) : (
+                          <div className="space-y-3">
+                            {!profileGeneratedPin ? (
+                              <div className="text-center py-1">
+                                <p className="text-xs text-slate-600 mb-3">
+                                  We will send a 6-digit confirmation PIN to your registered email:{' '}
+                                  <strong className="text-slate-900">{currentInstructor.email}</strong>
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={handleSendProfileVerifyPin}
+                                  disabled={sendingProfilePin}
+                                  className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                                >
+                                  <Send className="w-4 h-4" />
+                                  {sendingProfilePin ? 'Sending 6-Digit PIN...' : 'Send 6-Digit PIN to My Email'}
+                                </button>
+                              </div>
+                            ) : (
+                              <form onSubmit={handleConfirmAndSaveProfile} className="space-y-3">
+                                <div>
+                                  <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                                    Enter 6-Digit Email PIN
+                                  </label>
+                                  <input
+                                    type="text"
+                                    required
+                                    autoFocus
+                                    maxLength={6}
+                                    placeholder="e.g., 482910"
+                                    value={profileVerifyPinInput}
+                                    onChange={(e) => setProfileVerifyPinInput(e.target.value)}
+                                    className="w-full px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-center font-mono text-base tracking-widest focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                                  />
+                                </div>
+                                <button
+                                  type="submit"
+                                  disabled={savingProfile}
+                                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                                >
+                                  {savingProfile ? 'Verifying & Saving...' : 'Verify PIN & Save Changes'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleSendProfileVerifyPin}
+                                  disabled={sendingProfilePin}
+                                  className="w-full text-xs text-indigo-600 hover:underline font-medium"
+                                >
+                                  {sendingProfilePin ? 'Resending...' : 'Resend 6-digit PIN'}
+                                </button>
+                              </form>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Card 2: Change Password */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                    <div className="flex items-center gap-2.5 mb-1">
+                      <KeyRound className="w-5 h-5 text-indigo-600" />
+                      <h2 className="text-lg font-bold text-slate-900">Change Password</h2>
+                    </div>
+                    <p className="text-xs text-slate-500 mb-5">
+                      Update your instructor portal password using the strong password checklist below.
+                    </p>
+
+                    {passwordStatusMsg.text && (
+                      <div
+                        className={`mb-4 p-3 rounded-lg text-xs font-medium flex items-center gap-2 ${
+                          passwordStatusMsg.type === 'error'
+                            ? 'bg-red-50 text-red-700 border border-red-200'
+                            : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                        }`}
+                      >
+                        {passwordStatusMsg.type === 'error' ? (
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                        )}
+                        {passwordStatusMsg.text}
+                      </div>
+                    )}
+
+                    <form onSubmit={handleUpdateInstructorPassword} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                          Current Password
+                        </label>
+                        <input
+                          type={showChangePass ? 'text' : 'password'}
+                          required
+                          placeholder="Enter current password"
+                          value={currentPassInput}
+                          onChange={(e) => setCurrentPassInput(e.target.value)}
+                          className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                          New Strong Password
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showChangePass ? 'text' : 'password'}
+                            required
+                            placeholder="Enter new strong password"
+                            value={newPassInput}
+                            onChange={(e) => setNewPassInput(e.target.value)}
+                            className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowChangePass(!showChangePass)}
+                            className="absolute right-3 top-2 text-slate-400 hover:text-slate-600"
+                          >
+                            {showChangePass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
+                          Confirm New Password
+                        </label>
+                        <input
+                          type={showChangePass ? 'text' : 'password'}
+                          required
+                          placeholder="Re-enter new password"
+                          value={confirmPassInput}
+                          onChange={(e) => setConfirmPassInput(e.target.value)}
+                          className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        />
+                      </div>
+
+                      <PasswordStrengthChecklist
+                        password={newPassInput}
+                        confirmPassword={confirmPassInput}
+                      />
+
+                      <button
+                        type="submit"
+                        disabled={
+                          savingPassword ||
+                          !evaluatePasswordStrength(newPassInput).isValid ||
+                          newPassInput !== confirmPassInput
+                        }
+                        className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                      >
+                        {savingPassword ? 'Updating Password...' : 'Update Password'}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              ) : teacherViewTab === 'faculty' && currentInstructor.role === 'admin' ? (
+                // ================= TAB 2: SUPER ADMIN FACULTY APPROVAL & PASSWORD RESET =================
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                   <div className="mb-6">
                     <h2 className="text-lg font-bold text-slate-900">Instructor Account Requests & Directory</h2>
                     <p className="text-sm text-slate-500">
-                      Approve or revoke faculty access. Each approved instructor can only view and manage their own uploaded students.
+                      Approve faculty requests, or reset an instructor's password if they get locked out.
                     </p>
                   </div>
+
+                  {adminResetFaculty && (
+                    <form
+                      onSubmit={handleAdminResetFacultyPassword}
+                      className="mb-6 p-4 rounded-xl bg-indigo-50 border border-indigo-200 flex flex-col sm:flex-row items-center justify-between gap-3"
+                    >
+                      <div className="text-xs text-indigo-950">
+                        <span className="font-bold uppercase tracking-wider text-indigo-700 block">
+                          Super Admin Password Override
+                        </span>
+                        Setting a new strong password for <strong>{adminResetFaculty.full_name}</strong> (
+                        {adminResetFaculty.email})
+                      </div>
+                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g., Unp@2026!"
+                          value={adminNewPass}
+                          onChange={(e) => setAdminNewPass(e.target.value)}
+                          className="px-3 py-1.5 rounded-lg border border-indigo-300 bg-white text-xs font-mono"
+                        />
+                        <button
+                          type="submit"
+                          disabled={savingAdminReset}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold whitespace-nowrap"
+                        >
+                          {savingAdminReset ? 'Saving...' : 'Save Password'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAdminResetFaculty(null);
+                            setAdminNewPass('');
+                          }}
+                          className="p-1.5 text-slate-500 hover:text-slate-800"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </form>
+                  )}
 
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse text-sm">
@@ -842,7 +2252,7 @@ export default function App() {
                           <th className="py-3 px-3">Email</th>
                           <th className="py-3 px-3">Role</th>
                           <th className="py-3 px-3">Status</th>
-                          <th className="py-3 px-3 text-right">Approval Actions</th>
+                          <th className="py-3 px-3 text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -866,7 +2276,18 @@ export default function App() {
                                 {fac.status.toUpperCase()}
                               </span>
                             </td>
-                            <td className="py-3 px-3 text-right whitespace-nowrap space-x-2">
+                            <td className="py-3 px-3 text-right whitespace-nowrap space-x-1.5">
+                              <button
+                                onClick={() => {
+                                  setAdminResetFaculty(fac);
+                                  setAdminNewPass('');
+                                }}
+                                className="px-2.5 py-1 rounded-lg border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-semibold inline-flex items-center gap-1 transition"
+                                title="Set a new password for this instructor"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                Reset Pass
+                              </button>
                               {fac.role !== 'admin' && (
                                 <>
                                   {fac.status !== 'approved' && (
@@ -902,7 +2323,7 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                // ================= INSTRUCTOR'S ISOLATED CLASS RECORDS VIEW =================
+                // ================= TAB 1: INSTRUCTOR CLASS RECORDS =================
                 <>
                   <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                     <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -943,7 +2364,6 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Master List & Filters */}
                   <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                     <div className="flex flex-col sm:flex-row gap-3 justify-between mb-6">
                       <div className="relative flex-1">
@@ -1462,11 +2882,11 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* {rec.breakdown && (
+                  {rec.breakdown && (
                     <p className="text-xs text-slate-500 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100">
                       <strong>Breakdown:</strong> {rec.breakdown}
                     </p>
-                  )} */}
+                  )}
                 </div>
               ))}
             </div>
