@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { 
-  GraduationCap, ShieldCheck, Upload, Download, Search, 
-  LogOut, Eye, EyeOff, Trash2, CheckCircle2, AlertCircle, 
-  Lock, Pencil, Check, X, Mail, Send, UserCheck, KeyRound, 
+import * as XLSX from 'xlsx';
+import {
+  GraduationCap, ShieldCheck, Upload, Download, Search,
+  LogOut, Eye, EyeOff, Trash2, CheckCircle2, AlertCircle,
+  Lock, Pencil, Check, X, Mail, Send, UserCheck, KeyRound,
   ArrowLeft, UserPlus, Users, BookOpen, Clock, ChevronRight,
   Settings, RefreshCw, Calendar, Plus
 } from 'lucide-react';
@@ -250,7 +251,7 @@ export default function App() {
   const [sendingProfilePin, setSendingProfilePin] = useState(false);
   const [profileVerifyMsg, setProfileVerifyMsg] = useState({ type: '', text: '' });
 
-  // Change Password State (3 Independent Eye Toggles!)
+  // Change Password State (3 Independent Eye Toggles)
   const [currentPassInput, setCurrentPassInput] = useState('');
   const [newPassInput, setNewPassInput] = useState('');
   const [confirmPassInput, setConfirmPassInput] = useState('');
@@ -260,7 +261,7 @@ export default function App() {
   const [passwordStatusMsg, setPasswordStatusMsg] = useState({ type: '', text: '' });
   const [savingPassword, setSavingPassword] = useState(false);
 
-  // Super Admin Manual Password Reset Modal State (With Confirm Password & Validation)
+  // Super Admin Manual Password Reset Modal State
   const [adminResetFaculty, setAdminResetFaculty] = useState(null);
   const [adminNewPass, setAdminNewPass] = useState('');
   const [adminConfirmPass, setAdminConfirmPass] = useState('');
@@ -293,7 +294,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showProfileVerify, adminResetFaculty, showNewPeriodModal]);
 
-  // Instructor Signup Form (2 Independent Eye Toggles!)
+  // Instructor Signup Form (2 Independent Eye Toggles)
   const [signupName, setSignupName] = useState('');
   const [signupDept, setSignupDept] = useState('CCIT');
   const [signupEmail, setSignupEmail] = useState('');
@@ -468,7 +469,7 @@ export default function App() {
     setFilterSection('ALL');
     setShowNewPeriodModal(false);
     setUploadStatus(
-      `Switched to ${cleanSy} • ${cleanTerm}. Any CSV you upload now will be saved under this semester!`
+      `Switched to ${cleanSy} • ${cleanTerm}. Any Excel or CSV you upload now will be saved under this semester!`
     );
   };
 
@@ -1304,12 +1305,21 @@ export default function App() {
     return { school_year: DEFAULT_SCHOOL_YEAR, term: DEFAULT_TERM };
   };
 
+  const computeRemarksFromGrade = (gradeStr, currentRemarks) => {
+    const num = parseFloat(gradeStr);
+    if (!isNaN(num)) {
+      if (num <= 3.0) return 'Passed';
+      if (num === 4.0) return 'Conditional';
+      if (num > 4.0) return 'Failed';
+    }
+    return currentRemarks;
+  };
+
   const downloadTemplate = () => {
     const { school_year, term } = getActiveSchoolYearAndTerm();
     const csvContent = [
       'Student ID,Full Name,PIN,Subject,Section,Midterm Grade,Final Grade,Breakdown,Remarks,School Year,Term',
-      `26-20437,Acibo Anthoneth V.,0437,IT 100 - Living in the IT Era,BSN 1D,1.75,Pending,Quizzes: 45/60 (26.25%) | Activities: 57/95 (12.00%) | Projects: 91/100 (14.32%) | Midterm Exam: 54/60 (38.00%) | Total: 90.58%,Passed,${school_year},${term}`,
-      `25-19221,ACINCID JAYCOB R.,9221,IT 100 - Living in the IT Era,BSN 1D,2.25,Pending,Quizzes: 33/60 (23.25%) | Activities: 57/95 (12.00%) | Projects: 75/100 (13.12%) | Midterm Exam: 42/60 (34.00%) | Total: 82.38%,Passed,${school_year},${term}`
+      `26-000000,Doe John R.,123456,IT 100 - Living in the IT Era,BSN 1D,1.00,Pending,Quizzes: 33/60 (23.25%) | Activities: 57/95 (12.00%) | Projects: 75/100 (13.12%) | Midterm Exam: 42/60 (34.00%) | Total: 82.38%,Passed,${school_year},${term}`
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -1319,108 +1329,720 @@ export default function App() {
     a.download = `grades_template_${school_year}_${term.replace(/\s+/g, '_')}.csv`;
     a.click();
   };
+  // HELPER: Cryptographically Random 6-Digit PIN (100000 - 999999)
+  const generateRandom6DigitPin = () => {
+    const array = new Uint32Array(1);
+    window.crypto.getRandomValues(array);
+    return String(100000 + (array[0] % 900000));
+  };
 
-  // BULK CSV UPLOAD (Defaults show_breakdown to FALSE so breakdowns start hidden)
-  const handleCsvUpload = async (e) => {
+  // HELPER: Check if a record's PIN is still within the 5-year lock window
+  const isWithinPinLockWindow = (record, referenceSy, lockYears = 5) => {
+    const parseStartYear = (syStr) => {
+      const match = String(syStr || '').match(/\d{4}/);
+      return match ? parseInt(match[0], 10) : null;
+    };
+
+    const refYear = parseStartYear(referenceSy) || new Date().getFullYear();
+    const recYear = parseStartYear(record.school_year);
+
+    if (recYear !== null) {
+      return Math.abs(refYear - recYear) < lockYears;
+    }
+
+    if (record.updated_at) {
+      const ageMs = Date.now() - new Date(record.updated_at).getTime();
+      const lockMs = lockYears * 365.25 * 24 * 60 * 60 * 1000;
+      return ageMs < lockMs;
+    }
+
+    return true;
+  };
+
+  // HELPER: Assign Unique 6-Digit Randomized PINs (1 per student, unique per teacher, recyclable after 5 years)
+  const assignRandomizedPins = async (rows, instructorId, referenceSy) => {
+    const isValid6DigitPin = (p) => /^\d{6}$/.test(String(p || '').trim());
+
+    // 1. Fetch all existing records for THIS instructor (for per-teacher uniqueness + 5-year window)
+    const { data: teacherRecords, error: teacherErr } = await supabase
+      .from('student_grades')
+      .select('student_id, pin, school_year, updated_at')
+      .eq('instructor_id', instructorId);
+
+    if (teacherErr) {
+      throw new Error('Failed to check existing teacher PINs: ' + teacherErr.message);
+    }
+
+    // 2. Fetch existing system-wide PINs for the incoming student IDs (chunked by 200)
+    const incomingStudentIds = [...new Set(rows.map((r) => String(r.student_id || '').trim()).filter(Boolean))];
+    const systemStudentRecords = [];
+
+    for (let i = 0; i < incomingStudentIds.length; i += 200) {
+      const chunk = incomingStudentIds.slice(i, i + 200);
+      const { data: chunkData, error: chunkErr } = await supabase
+        .from('student_grades')
+        .select('student_id, pin, school_year, updated_at')
+        .in('student_id', chunk);
+
+      if (chunkErr) {
+        throw new Error('Failed to check existing student PINs: ' + chunkErr.message);
+      }
+      if (chunkData) systemStudentRecords.push(...chunkData);
+    }
+
+    // Map of student_id -> existing valid 6-digit PIN
+    const studentPinMap = new Map();
+    // Map of active 6-digit PIN -> student_id (scoped ONLY to this teacher & within 5 years)
+    const activeTeacherPins = new Map();
+
+    // Populate this teacher's active PIN pool & existing student PINs first
+    (teacherRecords || []).forEach((rec) => {
+      const sid = String(rec.student_id || '').trim();
+      const pin = String(rec.pin || '').trim();
+      if (!sid || !isValid6DigitPin(pin)) return;
+
+      if (!studentPinMap.has(sid)) {
+        studentPinMap.set(sid, pin);
+      }
+      if (isWithinPinLockWindow(rec, referenceSy, 5)) {
+        activeTeacherPins.set(pin, sid);
+      }
+    });
+
+    // Populate system-wide existing 6-digit PINs for students already registered under other teachers
+    systemStudentRecords.forEach((rec) => {
+      const sid = String(rec.student_id || '').trim();
+      const pin = String(rec.pin || '').trim();
+      if (!sid || !isValid6DigitPin(pin)) return;
+
+      if (!studentPinMap.has(sid)) {
+        studentPinMap.set(sid, pin);
+      }
+    });
+
+    // 3. Assign or reuse a unique 6-digit PIN for each row
+    return rows.map((row) => {
+      const sid = String(row.student_id || '').trim();
+      let assignedPin = '';
+
+      // Reuse existing 6-digit PIN if this student already has one and it doesn't collide with another active student under this teacher
+      if (studentPinMap.has(sid)) {
+        const existingPin = studentPinMap.get(sid);
+        const owner = activeTeacherPins.get(existingPin);
+        if (!owner || owner === sid) {
+          assignedPin = existingPin;
+        }
+      }
+
+      // Otherwise generate a fresh, cryptographically random 6-digit PIN unique to this teacher
+      if (!assignedPin) {
+        let candidate = '';
+        let attempts = 0;
+        do {
+          candidate = generateRandom6DigitPin();
+          attempts += 1;
+        } while (activeTeacherPins.has(candidate) && attempts < 10000);
+
+        assignedPin = candidate;
+        studentPinMap.set(sid, assignedPin);
+      }
+
+      activeTeacherPins.set(assignedPin, sid);
+
+      return {
+        ...row,
+        pin: assignedPin,
+      };
+    });
+  };
+  // Helper: 100% Dynamic Parser for University Gradesheets (.xlsx / .xls) & Flat Excel Tables
+  const parseExcelWorkbook = (arrayBuffer, fallbackSy, fallbackTerm) => {
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    const extractedRows = [];
+
+    const isExcelError = (val) => {
+      const s = String(val ?? '').trim().toUpperCase();
+      return (
+        s.startsWith('#REF!') ||
+        s.startsWith('#N/A') ||
+        s.startsWith('#VALUE!') ||
+        s.startsWith('#NAME?') ||
+        s.startsWith('#DIV/0!')
+      );
+    };
+
+    const formatGradeValue = (rawVal) => {
+      if (rawVal === '' || rawVal === null || rawVal === undefined || isExcelError(rawVal)) {
+        return null;
+      }
+      const str = String(rawVal).trim();
+      if (!str) return null;
+      const num = parseFloat(str);
+      if (!isNaN(num) && /^\d+(\.\d+)?$/.test(str)) {
+        return num.toFixed(2);
+      }
+      return str; // Preserves manual text like "UD", "INC", "DRP"
+    };
+
+    const normalizeComponentLabel = (rawLabel) => {
+      const lower = rawLabel.toLowerCase();
+      if (lower.includes('quiz')) return 'Quizzes';
+      if (lower.includes('participation') || lower.includes('activit') || lower.includes('recitation')) {
+        return 'Activities';
+      }
+      if (lower.includes('project') || lower.includes('assignment') || lower.includes('problem set')) {
+        return 'Projects';
+      }
+      if (lower.includes('mid') && lower.includes('exam')) return 'Midterm Exam';
+      if (lower.includes('final') && lower.includes('exam')) return 'Final Exam';
+      return rawLabel;
+    };
+
+    workbook.SheetNames.forEach((sheetName, sheetIdx) => {
+      // Skip hidden or very-hidden backup/template worksheets
+      const sheetMeta = workbook.Workbook?.Sheets?.[sheetIdx];
+      if (sheetMeta && sheetMeta.Hidden > 0) return;
+
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      if (!rows || rows.length < 3) return;
+
+      // =========================================================================
+      // CASE A: Official University Gradesheet Template (Dynamic Header Discovery)
+      // =========================================================================
+      let headerRowIdx = -1;
+      let colMap = {};
+
+      for (let r = 0; r < Math.min(rows.length, 25); r++) {
+        const rowUpper = rows[r].map((cell) => String(cell || '').trim().toUpperCase());
+        const codeIdx = rowUpper.indexOf('CODE');
+        const nameIdx = rowUpper.indexOf('NAME');
+        if (codeIdx !== -1 && nameIdx !== -1) {
+          headerRowIdx = r;
+          colMap = {
+            no: rowUpper.indexOf('NO'),
+            id: codeIdx,
+            name: nameIdx,
+            midSummary: rowUpper.indexOf('MID'),
+            finSummary: rowUpper.indexOf('FIN'),
+          };
+          break;
+        }
+      }
+
+      if (headerRowIdx !== -1) {
+        // 1. Dynamically Extract Metadata (Period, Code, Subject, Description, Section)
+        let courseCode = '';
+        let courseSubject = '';
+        let courseDesc = '';
+        let sectionName = sheetName;
+        let sheetSy = fallbackSy;
+        let sheetTerm = fallbackTerm;
+
+        for (let r = 0; r < headerRowIdx; r++) {
+          const row = rows[r] || [];
+          for (let c = 0; c < Math.min(row.length - 1, 6); c++) {
+            const label = String(row[c] || '').trim().toLowerCase();
+            if (!label.endsWith(':')) continue;
+
+            const rawVal = row[c + 1];
+            if (isExcelError(rawVal)) continue;
+            const val = String(rawVal || '').trim();
+            if (!val) continue;
+
+            if (label.startsWith('code')) courseCode = val;
+            else if (label.startsWith('subject')) courseSubject = val;
+            else if (label.startsWith('description') && !courseDesc) courseDesc = val;
+            else if (label.startsWith('section')) sectionName = val;
+            else if (label.startsWith('period') && val.includes('|')) {
+              const [pTerm, pSy] = val.split('|').map((s) => s.replace(/\s+/g, ' ').trim());
+              if (pTerm) sheetTerm = pTerm;
+              if (pSy) sheetSy = pSy;
+            }
+          }
+        }
+
+        const titlePart = courseSubject || courseDesc;
+        const fullSubject =
+          courseCode && titlePart
+            ? `${courseCode} - ${titlePart}`
+            : courseCode || titlePart || 'IT 100';
+
+        // 2. Dynamically Locate Group Header Row (e.g. Row 8) & Sub-Header Row (e.g. Row 10)
+        let groupRowIdx = -1;
+        let subRowIdx = -1;
+
+        for (let r = headerRowIdx - 1; r >= 0; r--) {
+          const rowLower = (rows[r] || []).map((cell) => String(cell || '').trim().toLowerCase());
+          if (subRowIdx === -1 && rowLower.includes('total') && rowLower.includes('%')) {
+            subRowIdx = r;
+          }
+          if (
+            groupRowIdx === -1 &&
+            (rowLower.some((c) => c.includes('mid grade')) ||
+              rowLower.some((c) => c.includes('final grade')) ||
+              rowLower.some((c) => c.includes('quizzes')))
+          ) {
+            groupRowIdx = r;
+          }
+        }
+
+        // 3. Dynamically Map All Component & Grade Columns Within Main Grading Area
+        const groupRow = groupRowIdx !== -1 ? rows[groupRowIdx] || [] : [];
+        const subRow = subRowIdx !== -1 ? rows[subRowIdx] || [] : [];
+        const maxRow = rows[headerRowIdx] || [];
+
+        const rawGroups = [];
+        for (let c = Math.max(colMap.name + 1, 0); c < groupRow.length; c++) {
+          const text = String(groupRow[c] || '').trim();
+          if (!text || !isNaN(Number(text))) continue;
+
+          const lower = text.toLowerCase();
+          rawGroups.push({ label: text, lower, startCol: c });
+
+          if (lower === 'final grade') {
+            break;
+          }
+        }
+
+        const groups = rawGroups.map((g, idx) => ({
+          ...g,
+          endCol:
+            idx < rawGroups.length - 1
+              ? rawGroups[idx + 1].startCol - 1
+              : Math.min(g.startCol + 2, subRow.length - 1),
+        }));
+
+        const midComponents = [];
+        const finComponents = [];
+        let midPctCol = -1;
+        let midEquivCol = -1;
+        let tentFinPctCol = -1;
+        let finRatingPctCol = -1;
+        let finEquivCol = -1;
+
+        let inFinalsSection = false;
+
+        groups.forEach((g) => {
+          const findSubCol = (predicate) => {
+            for (let c = g.startCol; c <= g.endCol; c++) {
+              const s = String(subRow[c] || '').trim().toLowerCase();
+              if (predicate(s, c)) return c;
+            }
+            return -1;
+          };
+
+          if (g.lower.includes('mid grade')) {
+            midPctCol = findSubCol((s) => s === 'mid' || s.includes('mid'));
+            if (midPctCol === -1) midPctCol = g.startCol;
+            midEquivCol = findSubCol((s) => s === 'e' || s.includes('equiv'));
+            if (midEquivCol === -1) midEquivCol = midPctCol + 1;
+            inFinalsSection = true;
+            return;
+          }
+
+          if (g.lower.includes('tentative')) {
+            tentFinPctCol = findSubCol((s) => s.includes('f grade') || s.includes('tentative'));
+            if (tentFinPctCol === -1) tentFinPctCol = g.startCol;
+            return;
+          }
+
+          if (g.lower === 'final grade') {
+            finRatingPctCol = findSubCol((s) => s === 'final' || s.includes('final'));
+            if (finRatingPctCol === -1) finRatingPctCol = g.startCol;
+            finEquivCol = findSubCol((s) => s === 'e' || s.includes('equiv'));
+            if (finEquivCol === -1) finEquivCol = finRatingPctCol + 1;
+            return;
+          }
+
+          const pctCol = findSubCol((s) => s === '%');
+          let totalCol = findSubCol((s) => s === 'total' || s === 'me' || s.includes('exam'));
+          if (totalCol === -1 && pctCol > g.startCol) {
+            totalCol = pctCol - 1;
+          }
+          const weightCol = pctCol !== -1 && pctCol + 1 <= g.endCol ? pctCol + 1 : -1;
+
+          if (totalCol !== -1) {
+            const compInfo = {
+              name: normalizeComponentLabel(g.label),
+              totalCol,
+              weightCol,
+              maxScore: Number(maxRow[totalCol] || 0),
+            };
+            if (!inFinalsSection) midComponents.push(compInfo);
+            else finComponents.push(compInfo);
+          }
+        });
+
+        const hasMidtermMaxScores = midComponents.some((c) => c.maxScore > 0);
+        const hasFinalMaxScores = finComponents.some((c) => c.maxScore > 0);
+
+        // 4. Loop Through Student Rows Dynamically
+        for (let r = headerRowIdx + 1; r < rows.length; r++) {
+          const row = rows[r];
+          const sid = String(row[colMap.id] || '').trim();
+          const rawName = String(row[colMap.name] || '').trim();
+
+          if (!sid || !rawName || isExcelError(sid) || !/\d/.test(sid)) continue;
+
+          // Skip footer rows below the student list (e.g., Row 73 where NO is blank and B/C mirror Code & Description)
+          if (colMap.no !== -1) {
+            const rowNumVal = String(row[colMap.no] ?? '').trim();
+            if (!/^\d+$/.test(rowNumVal)) continue;
+          }
+          if (
+            (courseCode && sid.toLowerCase() === courseCode.toLowerCase()) ||
+            (titlePart && rawName.toLowerCase() === titlePart.toLowerCase())
+          ) {
+            continue;
+          }
+
+          const cleanName = rawName.includes(',')
+            ? rawName
+                .split(',')
+                .map((p) => p.trim())
+                .join(' ')
+            : rawName;
+
+          const pin = '';''
+
+          const rawMid =
+            colMap.midSummary !== -1 && row[colMap.midSummary] !== ''
+              ? row[colMap.midSummary]
+              : midEquivCol !== -1
+              ? row[midEquivCol]
+              : '';
+          const parsedMid = formatGradeValue(rawMid);
+          const midTotalPct = midPctCol !== -1 ? Number(row[midPctCol] || 0) : 0;
+          const isMidManualText = parsedMid && isNaN(parseFloat(parsedMid));
+
+          const midGrade =
+            hasMidtermMaxScores || midTotalPct > 0 || isMidManualText
+              ? parsedMid || 'Pending'
+              : 'Pending';
+
+          const rawFin =
+            colMap.finSummary !== -1 && row[colMap.finSummary] !== ''
+              ? row[colMap.finSummary]
+              : finEquivCol !== -1
+              ? row[finEquivCol]
+              : '';
+          const parsedFin = formatGradeValue(rawFin);
+          const tentFinPct = tentFinPctCol !== -1 ? Number(row[tentFinPctCol] || 0) : 0;
+          const isFinManualText = parsedFin && isNaN(parseFloat(parsedFin));
+
+          const finGrade =
+            hasFinalMaxScores || tentFinPct > 0 || isFinManualText
+              ? parsedFin || 'Pending'
+              : 'Pending';
+
+          const gradeForRemarks = finGrade !== 'Pending' ? finGrade : midGrade;
+          let remarks = 'Passed';
+          if (gradeForRemarks !== 'Pending') {
+            if (isNaN(parseFloat(gradeForRemarks))) {
+              const upper = gradeForRemarks.toUpperCase();
+              if (upper === 'INC') remarks = 'INC';
+              else if (upper === 'UD' || upper === 'DRP' || upper === 'F') remarks = 'Failed';
+              else remarks = 'Conditional';
+            } else {
+              remarks = computeRemarksFromGrade(gradeForRemarks, 'Passed');
+            }
+          }
+
+          const breakdownParts = [];
+
+          if (midComponents.length > 0 && (hasMidtermMaxScores || midTotalPct > 0)) {
+            const midItems = midComponents.map((comp) => {
+              const score = Number(row[comp.totalCol] || 0);
+              const weighted = comp.weightCol !== -1 ? Number(row[comp.weightCol] || 0) : null;
+              return weighted !== null
+                ? `${comp.name}: ${score}/${comp.maxScore} (${weighted.toFixed(2)}%)`
+                : `${comp.name}: ${score}/${comp.maxScore}`;
+            });
+            if (midPctCol !== -1) {
+              midItems.push(`Total: ${midTotalPct.toFixed(2)}%`);
+            }
+            breakdownParts.push(`Midterm — ${midItems.join(' | ')}`);
+          }
+
+          if (finComponents.length > 0 && (hasFinalMaxScores || tentFinPct > 0)) {
+            const finItems = finComponents.map((comp) => {
+              const score = Number(row[comp.totalCol] || 0);
+              const weighted = comp.weightCol !== -1 ? Number(row[comp.weightCol] || 0) : null;
+              return weighted !== null
+                ? `${comp.name}: ${score}/${comp.maxScore} (${weighted.toFixed(2)}%)`
+                : `${comp.name}: ${score}/${comp.maxScore}`;
+            });
+            if (tentFinPctCol !== -1) {
+              finItems.push(`Tentative Final: ${tentFinPct.toFixed(2)}%`);
+            }
+            if (finRatingPctCol !== -1) {
+              const finalRatingPct = Number(row[finRatingPctCol] || 0);
+              finItems.push(`Final Rating: ${finalRatingPct.toFixed(2)}%`);
+            }
+            breakdownParts.push(`Finals — ${finItems.join(' | ')}`);
+          }
+
+          extractedRows.push({
+            instructor_id: currentInstructor.id,
+            instructor_name: currentInstructor.full_name,
+            school_year: sheetSy,
+            term: sheetTerm,
+            show_breakdown: false,
+            student_id: sid,
+            full_name: cleanName,
+            pin,
+            subject: fullSubject,
+            section: sectionName,
+            midterm_grade: midGrade,
+            final_grade: finGrade,
+            breakdown: breakdownParts.join(' || '),
+            remarks,
+            _sourceSheet: sheetName,
+            _sourceRow: r + 1,
+          });
+        }
+        return;
+      }
+
+      // =========================================================================
+      // CASE B: Standard Flat Excel Sheet (Row 1 has headers like "Student ID", etc.)
+      // =========================================================================
+      const flatData = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      flatData.forEach((item, idx) => {
+        const keys = Object.keys(item);
+        const findVal = (candidates) => {
+          const match = keys.find((k) => candidates.includes(k.trim().toLowerCase()));
+          return match ? String(item[match]).trim() : '';
+        };
+
+        const sid = findVal(['student id', 'student_id', 'id', 'code']);
+        const fullName = findVal(['full name', 'full_name', 'name', 'student name']);
+        if (!sid || !fullName) return;
+
+        const pin = findVal(['pin']); // Auto-generated if blank or not 6 digits
+        const subject = findVal(['subject', 'course']) || 'IT 100';
+        const section = findVal(['section']) || sheetName;
+        const midGrade = findVal(['midterm grade', 'midterm_grade', 'midterm', 'mid']) || 'Pending';
+        const finGrade = findVal(['final grade', 'final_grade', 'final', 'fin']) || 'Pending';
+        const breakdown = findVal(['breakdown', 'details']);
+        const remarks =
+          findVal(['remarks', 'status']) ||
+          computeRemarksFromGrade(finGrade !== 'Pending' ? finGrade : midGrade, 'Passed');
+        const sy = findVal(['school year', 'school_year', 'sy']) || fallbackSy;
+        const term = findVal(['term', 'semester']) || fallbackTerm;
+
+        extractedRows.push({
+          instructor_id: currentInstructor.id,
+          instructor_name: currentInstructor.full_name,
+          school_year: sy,
+          term,
+          show_breakdown: false,
+          student_id: sid,
+          full_name: fullName,
+          pin,
+          subject,
+          section,
+          midterm_grade: midGrade,
+          final_grade: finGrade,
+          breakdown,
+          remarks,
+          _sourceSheet: sheetName,
+          _sourceRow: idx + 2,
+        });
+      });
+    });
+
+    return extractedRows;
+  };
+
+  // UNIFIED EXCEL (.xlsx / .xls) & CSV UPLOAD HANDLER (With Pre-Upload Duplicate Checker)
+  const handleGradeFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file || !currentInstructor) return;
 
     const { school_year: activeSy, term: activeTerm } = getActiveSchoolYearAndTerm();
+    const isExcel =
+      file.name.toLowerCase().endsWith('.xlsx') ||
+      file.name.toLowerCase().endsWith('.xls');
 
     const reader = new FileReader();
     reader.onload = async (event) => {
-      const text = event.target.result;
-      const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '');
-      if (lines.length < 2) {
-        setUploadStatus('Error: CSV file is empty or missing rows.');
-        return;
-      }
+      try {
+        let rowsToUpsert = [];
 
-      const headerCols = lines[0].toLowerCase().split(',').map((h) => h.trim());
-      const hasEmailCol = headerCols.includes('email') || headerCols.includes('gmail');
-      const hasFinalCol = headerCols.includes('final grade') || headerCols.includes('final_grade');
-      const syColIdx = headerCols.findIndex((h) => h === 'school year' || h === 'school_year' || h === 'sy');
-      const termColIdx = headerCols.findIndex((h) => h === 'term' || h === 'semester');
+        if (isExcel) {
+          rowsToUpsert = parseExcelWorkbook(event.target.result, activeSy, activeTerm);
+        } else {
+          const text = event.target.result;
+          const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '');
+          if (lines.length < 2) {
+            setUploadStatus('Error: File is empty or missing rows.');
+            return;
+          }
 
-      const rowsToUpsert = [];
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',').map((c) => c.trim());
-        if (cols.length >= 6) {
-          const rowSy = syColIdx !== -1 && cols[syColIdx] ? cols[syColIdx] : activeSy;
-          const rowTerm = termColIdx !== -1 && cols[termColIdx] ? cols[termColIdx] : activeTerm;
+          const headerCols = lines[0].toLowerCase().split(',').map((h) => h.trim());
+          const hasEmailCol = headerCols.includes('email') || headerCols.includes('gmail');
+          const hasFinalCol = headerCols.includes('final grade') || headerCols.includes('final_grade');
+          const syColIdx = headerCols.findIndex(
+            (h) => h === 'school year' || h === 'school_year' || h === 'sy'
+          );
+          const termColIdx = headerCols.findIndex((h) => h === 'term' || h === 'semester');
 
-          const baseRow = {
-            instructor_id: currentInstructor.id,
-            instructor_name: currentInstructor.full_name,
-            school_year: rowSy,
-            term: rowTerm,
-            show_breakdown: false, // Default to HIDDEN
-          };
+          for (let i = 1; i < lines.length; i++) {
+            const cols = lines[i].split(',').map((c) => c.trim());
+            if (cols.length >= 6) {
+              const rowSy = syColIdx !== -1 && cols[syColIdx] ? cols[syColIdx] : activeSy;
+              const rowTerm = termColIdx !== -1 && cols[termColIdx] ? cols[termColIdx] : activeTerm;
 
-          if (hasEmailCol && hasFinalCol) {
-            rowsToUpsert.push({
-              ...baseRow,
-              student_id: cols[0],
-              full_name: cols[1],
-              email: cols[2] || '',
-              pin: cols[3],
-              subject: cols[4],
-              section: cols[5],
-              midterm_grade: cols[6],
-              final_grade: cols[7] || 'Pending',
-              breakdown: cols[8] || '',
-              remarks: cols[9] || 'Passed',
-            });
-          } else if (!hasEmailCol && hasFinalCol) {
-            rowsToUpsert.push({
-              ...baseRow,
-              student_id: cols[0],
-              full_name: cols[1],
-              pin: cols[2],
-              subject: cols[3],
-              section: cols[4],
-              midterm_grade: cols[5],
-              final_grade: cols[6] || 'Pending',
-              breakdown: cols[7] || '',
-              remarks: cols[8] || 'Passed',
-            });
-          } else {
-            rowsToUpsert.push({
-              ...baseRow,
-              student_id: cols[0],
-              full_name: cols[1],
-              pin: cols[2],
-              subject: cols[3],
-              section: cols[4],
-              midterm_grade: cols[5],
-              final_grade: 'Pending',
-              breakdown: cols[6] || '',
-              remarks: cols[7] || 'Passed',
-            });
+              const baseRow = {
+                instructor_id: currentInstructor.id,
+                instructor_name: currentInstructor.full_name,
+                school_year: rowSy,
+                term: rowTerm,
+                show_breakdown: false,
+                _sourceSheet: 'CSV',
+                _sourceRow: i + 1,
+              };
+
+              if (hasEmailCol && hasFinalCol) {
+                rowsToUpsert.push({
+                  ...baseRow,
+                  student_id: cols[0],
+                  full_name: cols[1],
+                  email: cols[2] || '',
+                  pin: cols[3],
+                  subject: cols[4],
+                  section: cols[5],
+                  midterm_grade: cols[6],
+                  final_grade: cols[7] || 'Pending',
+                  breakdown: cols[8] || '',
+                  remarks: cols[9] || 'Passed',
+                });
+              } else if (!hasEmailCol && hasFinalCol) {
+                rowsToUpsert.push({
+                  ...baseRow,
+                  student_id: cols[0],
+                  full_name: cols[1],
+                  pin: cols[2],
+                  subject: cols[3],
+                  section: cols[4],
+                  midterm_grade: cols[5],
+                  final_grade: cols[6] || 'Pending',
+                  breakdown: cols[7] || '',
+                  remarks: cols[8] || 'Passed',
+                });
+              } else {
+                rowsToUpsert.push({
+                  ...baseRow,
+                  student_id: cols[0],
+                  full_name: cols[1],
+                  pin: cols[2],
+                  subject: cols[3],
+                  section: cols[4],
+                  midterm_grade: cols[5],
+                  final_grade: 'Pending',
+                  breakdown: cols[6] || '',
+                  remarks: cols[7] || 'Passed',
+                });
+              }
+            }
           }
         }
-      }
 
-      setUploadStatus(
-        `Uploading ${rowsToUpsert.length} records to ${activeSy} (${activeTerm}) with Breakdowns Hidden by default...`
-      );
+        if (rowsToUpsert.length === 0) {
+          setUploadStatus('No valid student grade rows were found in that file.');
+          return;
+        }
 
-      const { error } = await supabase
-        .from('student_grades')
-        .upsert(rowsToUpsert, {
-          onConflict: 'student_id,subject,section,instructor_id,school_year,term',
+        // PRE-UPLOAD DUPLICATE CHECK (Prevents silent overwrites & Supabase 500 errors)
+        const seenMap = new Map();
+        const conflicts = [];
+
+        rowsToUpsert.forEach((row) => {
+          const uniqueKey = [
+            row.student_id,
+            row.subject,
+            row.section,
+            row.instructor_id,
+            row.school_year,
+            row.term,
+          ]
+            .map((v) => String(v || '').trim().toLowerCase())
+            .join('|||');
+
+          if (seenMap.has(uniqueKey)) {
+            const first = seenMap.get(uniqueKey);
+            conflicts.push({
+              student_id: row.student_id,
+              full_name: row.full_name,
+              subject: row.subject,
+              section: row.section,
+              firstLoc: `"${first._sourceSheet}" (Row ${first._sourceRow})`,
+              secondLoc: `"${row._sourceSheet}" (Row ${row._sourceRow})`,
+            });
+          } else {
+            seenMap.set(uniqueKey, row);
+          }
         });
 
-      if (error) {
-        setUploadStatus('Upload Error: ' + error.message);
-      } else {
+        if (conflicts.length > 0) {
+          console.warn('Duplicate grade rows detected before upload:', conflicts);
+          const preview = conflicts
+            .slice(0, 5)
+            .map(
+              (c) =>
+                `• ${c.student_id} (${c.full_name}) — [${c.subject} | ${c.section}] appears in ${c.firstLoc} and ${c.secondLoc}`
+            )
+            .join('\n');
+          const moreNote =
+            conflicts.length > 5
+              ? `\n...and ${conflicts.length - 5} more duplicate(s). Check the browser console (F12) for the full list.`
+              : '';
+
+          setUploadStatus(
+            `Upload Stopped: Found ${conflicts.length} duplicate record(s) with the exact same Student ID, Subject, and Section:\n${preview}${moreNote}`
+          );
+          return;
+        }
+
+        // Strip internal diagnostic properties before sending to Supabase
+        const cleanRows = rowsToUpsert.map(({ _sourceSheet, _sourceRow, ...dbRow }) => dbRow);
+
         setUploadStatus(
-          `Successfully uploaded/updated ${rowsToUpsert.length} records in ${activeSy} • ${activeTerm} (Breakdowns set to Hidden)!`
+          `Assigning unique 6-digit PINs and uploading ${cleanRows.length} records from "${file.name}" to SY ${activeSy} (${activeTerm})...`
         );
-        fetchInstructorRecords();
+
+        const rowsWithPins = await assignRandomizedPins(
+          cleanRows,
+          currentInstructor.id,
+          activeSy
+        );
+
+        const { error } = await supabase
+          .from('student_grades')
+          .upsert(rowsWithPins, {
+            onConflict: 'student_id,subject,section,instructor_id,school_year,term',
+          });
+
+        if (error) {
+          setUploadStatus('Upload Error: ' + error.message);
+        } else {
+          setUploadStatus(
+            `Successfully imported ${cleanRows.length} student records from "${file.name}" (Breakdowns set to Hidden)!`
+          );
+          fetchInstructorRecords();
+        }
+      } catch (err) {
+        setUploadStatus('File Parse Error: ' + err.message);
       }
     };
-    reader.readAsText(file);
+
+    if (isExcel) {
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.readAsText(file);
+    }
     e.target.value = '';
   };
 
@@ -1517,16 +2139,6 @@ export default function App() {
         `Breakdown is now ${shouldShow ? 'VISIBLE' : 'HIDDEN'} for ${scopeLabel}!`
       );
     }
-  };
-
-  const computeRemarksFromGrade = (gradeStr, currentRemarks) => {
-    const num = parseFloat(gradeStr);
-    if (!isNaN(num)) {
-      if (num <= 3.0) return 'Passed';
-      if (num === 4.0) return 'Conditional';
-      if (num > 4.0) return 'Failed';
-    }
-    return currentRemarks;
   };
 
   const startEdit = (rec) => {
@@ -1644,7 +2256,13 @@ export default function App() {
   });
 
   const subjects = ['ALL', ...new Set(periodFilteredRecords.map((r) => r.subject))];
-  const sections = ['ALL', ...new Set(periodFilteredRecords.map((r) => r.section))];
+
+  const subjectFilteredRecords =
+    filterSubject === 'ALL'
+      ? periodFilteredRecords
+      : periodFilteredRecords.filter((r) => r.subject === filterSubject);
+
+  const sections = ['ALL', ...new Set(subjectFilteredRecords.map((r) => r.section))];
 
   const filteredRecords = periodFilteredRecords.filter((r) => {
     const matchSubject = filterSubject === 'ALL' || r.subject === filterSubject;
@@ -3257,7 +3875,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Card 2: Bulk CSV Upload Card */}
+                  {/* Card 2: Bulk Excel / CSV Upload Card */}
                   <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6">
                     <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                       <div>
@@ -3265,7 +3883,7 @@ export default function App() {
                           Target Upload Period: SY {activeSyLabel} • {activeTermLabel}
                         </div>
                         <h2 className={UI_TEXT.cardTitle}>
-                          Bulk CSV Upload — {currentInstructor.full_name}
+                          Bulk Excel / CSV Upload — {currentInstructor.full_name}
                         </h2>
                         <p className={UI_TEXT.cardSubtitle}>
                           Uploaded records default to <strong>Breakdown: Hidden</strong> until you reveal them below.
@@ -3281,16 +3899,21 @@ export default function App() {
                         </button>
                         <label className="w-full sm:w-auto justify-center flex items-center gap-2 px-4 py-2.5 sm:py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold cursor-pointer transition">
                           <Upload className="w-4 h-4 shrink-0" />
-                          <span>Upload CSV to {activeTermLabel}</span>
-                          <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
+                          <span>Upload Excel / CSV to {activeTermLabel}</span>
+                          <input
+                            type="file"
+                            accept=".xlsx,.xls,.csv"
+                            onChange={handleGradeFileUpload}
+                            className="hidden"
+                          />
                         </label>
                       </div>
                     </div>
                     {uploadStatus && (
-                      <div className="mt-4 p-3 rounded-lg bg-indigo-50 text-indigo-900 text-xs sm:text-sm font-medium flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
-                          <span>{uploadStatus}</span>
+                      <div className="mt-4 p-3 rounded-lg bg-indigo-50 text-indigo-900 text-xs sm:text-sm font-medium flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                          <span className="whitespace-pre-line">{uploadStatus}</span>
                         </div>
                         <button
                           onClick={() => setUploadStatus('')}
@@ -3328,7 +3951,21 @@ export default function App() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 md:flex gap-2.5 sm:gap-3">
                         <select
                           value={filterSubject}
-                          onChange={(e) => setFilterSubject(e.target.value)}
+                          onChange={(e) => {
+                            const nextSubject = e.target.value;
+                            setFilterSubject(nextSubject);
+                            // Reset section if it doesn't belong to the newly selected subject
+                            if (nextSubject !== 'ALL') {
+                              const validSections = new Set(
+                                periodFilteredRecords
+                                  .filter((r) => r.subject === nextSubject)
+                                  .map((r) => r.section)
+                              );
+                              if (!validSections.has(filterSection)) {
+                                setFilterSection('ALL');
+                              }
+                            }
+                          }}
                           className="w-full md:w-auto px-3 py-2 rounded-lg border border-slate-300 text-xs sm:text-sm bg-white"
                         >
                           {subjects.map((sub) => (
@@ -3344,7 +3981,11 @@ export default function App() {
                         >
                           {sections.map((sec) => (
                             <option key={sec} value={sec}>
-                              {sec === 'ALL' ? 'All Sections in Term' : sec}
+                              {sec === 'ALL'
+                                ? filterSubject === 'ALL'
+                                  ? 'All Sections in Term'
+                                  : 'All Sections in Subject'
+                                : sec}
                             </option>
                           ))}
                         </select>
@@ -3388,36 +4029,38 @@ export default function App() {
                             </button>
                           </div>
                         ) : (
-                          sections.filter((s) => s !== 'ALL').map((sec) => (
-                            <div
-                              key={sec}
-                              className="flex items-center justify-between sm:justify-start gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-slate-200 w-full sm:w-auto"
-                            >
-                              <span className="text-xs font-bold text-slate-700 mr-1">{sec}:</span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  disabled={updatingBreakdown}
-                                  onClick={() => handleSetSectionBreakdownVisibility(sec, true)}
-                                  className="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold flex items-center gap-1 transition"
-                                  title={`Show breakdown for all students in ${sec}`}
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                  Show
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={updatingBreakdown}
-                                  onClick={() => handleSetSectionBreakdownVisibility(sec, false)}
-                                  className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold flex items-center gap-1 transition"
-                                  title={`Hide breakdown for all students in ${sec}`}
-                                >
-                                  <EyeOff className="w-3.5 h-3.5" />
-                                  Hide
-                                </button>
+                          sections
+                            .filter((s) => s !== 'ALL')
+                            .map((sec) => (
+                              <div
+                                key={sec}
+                                className="flex items-center justify-between sm:justify-start gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-slate-200 w-full sm:w-auto"
+                              >
+                                <span className="text-xs font-bold text-slate-700 mr-1">{sec}:</span>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={updatingBreakdown}
+                                    onClick={() => handleSetSectionBreakdownVisibility(sec, true)}
+                                    className="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold flex items-center gap-1 transition"
+                                    title={`Show breakdown for all students in ${sec}`}
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                    Show
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={updatingBreakdown}
+                                    onClick={() => handleSetSectionBreakdownVisibility(sec, false)}
+                                    className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold flex items-center gap-1 transition"
+                                    title={`Hide breakdown for all students in ${sec}`}
+                                  >
+                                    <EyeOff className="w-3.5 h-3.5" />
+                                    Hide
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          ))
+                            ))
                         )}
 
                         <div className="flex items-center justify-between sm:justify-start gap-1.5 bg-slate-900 text-white px-3 py-1.5 rounded-lg w-full sm:w-auto">
@@ -3455,7 +4098,7 @@ export default function App() {
                       ) : filteredRecords.length === 0 ? (
                         <div className="py-8 text-center text-slate-400 text-sm">
                           {activePeriodKey === 'ALL'
-                            ? 'No student records found under your account. Upload a CSV file to get started.'
+                            ? 'No student records found under your account. Upload an Excel or CSV file to get started.'
                             : `No student records uploaded for SY ${activeSyLabel} • ${activeTermLabel} yet.`}
                         </div>
                       ) : (
@@ -3531,7 +4174,7 @@ export default function App() {
                                         onChange={(e) =>
                                           setEditForm({ ...editForm, term: e.target.value })
                                         }
-                                        className="w-full px-2 py-1.5 rounded border border-indigo-300 bg-white"
+                                        className="w-full px-2.5 py-1.5 rounded border border-indigo-300 bg-white"
                                       >
                                         <option value="1st Term">1st Term</option>
                                         <option value="2nd Term">2nd Term</option>
@@ -3793,8 +4436,8 @@ export default function App() {
                             <tr>
                               <td colSpan="12" className="py-8 text-center text-slate-400">
                                 {activePeriodKey === 'ALL'
-                                  ? 'No student records found under your account. Upload a CSV file to get started.'
-                                  : `No student records uploaded for SY ${activeSyLabel} • ${activeTermLabel} yet. Click "Upload CSV to ${activeTermLabel}" above to add records.`}
+                                  ? 'No student records found under your account. Upload an Excel or CSV file to get started.'
+                                  : `No student records uploaded for SY ${activeSyLabel} • ${activeTermLabel} yet. Click "Upload Excel / CSV to ${activeTermLabel}" above to add records.`}
                               </td>
                             </tr>
                           ) : (
@@ -3912,7 +4555,13 @@ export default function App() {
                                         className="w-20 px-2 py-1 rounded border border-indigo-400 bg-white font-bold text-indigo-950"
                                       />
                                     ) : (
-                                      <span className={rec.final_grade === 'Pending' || !rec.final_grade ? 'text-slate-400 font-normal text-xs' : 'font-bold text-indigo-950'}>
+                                      <span
+                                        className={
+                                          rec.final_grade === 'Pending' || !rec.final_grade
+                                            ? 'text-slate-400 font-normal text-xs'
+                                            : 'font-bold text-indigo-950'
+                                        }
+                                      >
                                         {rec.final_grade || 'Pending'}
                                       </span>
                                     )}
@@ -4008,7 +4657,11 @@ export default function App() {
                                               ? 'text-emerald-600 hover:text-emerald-900 hover:bg-emerald-50'
                                               : 'text-slate-300 cursor-not-allowed'
                                           }`}
-                                          title={rec.email ? `Resend PIN to ${rec.email}` : 'Student has not registered a Gmail yet'}
+                                          title={
+                                            rec.email
+                                              ? `Resend PIN to ${rec.email}`
+                                              : 'Student has not registered a Gmail yet'
+                                          }
                                         >
                                           <Mail className="w-4 h-4" />
                                         </button>
@@ -4231,7 +4884,7 @@ export default function App() {
                         <input
                           type={showPin ? 'text' : 'password'}
                           required
-                          placeholder="Enter your 4-digit PIN"
+                          placeholder="Enter your 6-digit PIN"
                           value={pinInput}
                           onChange={(e) => setPinInput(e.target.value)}
                           className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
